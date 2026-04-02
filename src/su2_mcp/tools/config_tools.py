@@ -55,6 +55,25 @@ def update_config_entries(
                 "Some option names were deprecated in SU2 v8.3 and have been "
                 "automatically remapped. Please use the new names in future calls."
             )
+
+        # Check for missing required options and warn the caller.
+        current = config_utils.parse_config_file(record.config_path)
+        current_keys = {k.upper() for k in current}
+        _REQUIRED_EULER = {
+            "SOLVER", "MACH_NUMBER", "AOA",
+            "FREESTREAM_PRESSURE", "FREESTREAM_TEMPERATURE",
+            "MARKER_EULER", "MARKER_FAR",
+            "CONV_NUM_METHOD_FLOW", "TIME_DISCRE_FLOW",
+            "NUM_METHOD_GRAD", "CFL_NUMBER", "ITER",
+        }
+        missing = _REQUIRED_EULER - current_keys
+        if missing:
+            result["missing_required"] = sorted(missing)
+            result["missing_note"] = (
+                f"SU2 will fail without these options: {', '.join(sorted(missing))}. "
+                "Call update_config_entries again to set them."
+            )
+
         return result
     except KeyError as exc:
         return _error(str(exc), error_type="not_found")
