@@ -2,6 +2,7 @@
 
 from su2_mcp.tools.config_tools import (
     get_config_text,
+    get_valid_config_options,
     parse_config,
     set_mesh,
     update_config_entries,
@@ -29,6 +30,7 @@ __all__ = [
     "create_su2_session",
     "get_session_info",
     "get_config_text",
+    "get_valid_config_options",
     "parse_config",
     "ping",
     "get_su2_status",

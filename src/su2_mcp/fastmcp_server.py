@@ -37,6 +37,7 @@ def build_server() -> FastMCP:
     server.add_tool(tools.get_config_text)
     server.add_tool(tools.parse_config)
     server.add_tool(tools.update_config_entries)
+    server.add_tool(tools.get_valid_config_options)
     server.add_tool(tools.set_mesh)
     server.add_tool(tools.generate_mesh_from_step)
     server.add_tool(tools.analyze_mesh)

@@ -5,6 +5,43 @@ from __future__ import annotations
 from collections.abc import Iterable, MutableMapping
 from pathlib import Path
 
+# --------------------------------------------------------------------------- #
+# SU2 v5/v6 → v8.3 deprecated option name mapping
+# --------------------------------------------------------------------------- #
+
+DEPRECATED_OPTIONS: dict[str, str] = {
+    "PHYSICAL_PROBLEM": "SOLVER",
+    "CONV_CRITERIA": "CONV_FIELD",
+    "RESIDUAL_REDUCTION": "CONV_RESIDUAL_MINVAL",
+    "RESIDUAL_MINVAL": "CONV_RESIDUAL_MINVAL",
+    "OUTPUT_FORMAT": "OUTPUT_FILES",
+    "WRT_SOL_FREQ": "OUTPUT_WRT_FREQ",
+    "WRT_CON_FREQ": "OUTPUT_WRT_FREQ",
+    "SCREEN_WRT_FREQ": "OUTPUT_WRT_FREQ",
+    "STARTCONV_ITER": "CONV_STARTITER",
+    "EXT_ITER": "ITER",
+}
+
+
+def remap_deprecated_keys(
+    updates: MutableMapping[str, object],
+) -> tuple[dict[str, object], list[dict[str, str]]]:
+    """Replace deprecated option names with SU2 8.3 equivalents.
+
+    Returns a new dict with corrected keys and a list of warning dicts
+    ``[{"old": ..., "new": ...}, ...]`` describing what was remapped.
+    """
+    remapped: dict[str, object] = {}
+    warnings: list[dict[str, str]] = []
+    for key, value in updates.items():
+        new_key = DEPRECATED_OPTIONS.get(key)
+        if new_key is not None:
+            warnings.append({"old": key, "new": new_key})
+            remapped[new_key] = value
+        else:
+            remapped[key] = value
+    return remapped, warnings
+
 
 def _infer_scalar(value: str) -> object:
     lower = value.lower()
