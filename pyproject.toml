@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "su2-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "An MCP server around SU2 workflows"
 authors = [
   { name = "The Design Research Collective", email = "ask-drc@cmu.edu" }
@@ -57,6 +57,9 @@ indent-style = "space"
 select = ["E", "F", "I", "B", "UP", "ANN", "C4", "D"]
 ignore = ["D203", "D213"]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN", "D"]
+
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true
@@ -69,6 +72,11 @@ mypy_path = "src"
 [[tool.mypy.overrides]]
 module = ["mcp.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["su2_mcp.cpacs_adapter", "gmsh"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
