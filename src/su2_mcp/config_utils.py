@@ -222,11 +222,42 @@ def ensure_force_output(config_path: Path) -> dict[str, object]:
                 "history.csv carries CL/CD."
             )
 
+    # 3. Reference quantities. Writing forces is not enough — they must be
+    #    NON-DIMENSIONALISED against the real aircraft. SU2 defaults REF_AREA to
+    #    1.0 m^2, so a config without it yields coefficients scaled by the whole
+    #    wing area. Live on 2026-08-03: a missing REF_AREA (true ~192 m^2) gave
+    #    CL = 15.18 instead of ~0.08 -- a factor of ~190 -- which was injected
+    #    into aviary, diverged its trim solver, and produced GTOW 310,918 kg /
+    #    fuel 208,551 kg while still reporting itself "coupled".
+    #
+    #    We deliberately do NOT invent a value: only the geometry discipline
+    #    knows the reference area. We report it loudly so the caller sets it.
+    ref_area = entries.get("REF_AREA")
+    ref_area_bad = ref_area is None
+    try:
+        ref_area_bad = ref_area_bad or float(ref_area) <= 1.0  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        ref_area_bad = True
+    if ref_area_bad:
+        notes.append(
+            f"REF_AREA is {'missing' if ref_area is None else repr(ref_area)} — SU2 will "
+            "non-dimensionalise forces against its 1.0 m^2 default, so CL/CD will be "
+            "wrong by roughly the wing area (observed: CL 15.18 instead of ~0.08). "
+            "Set REF_AREA to the wing reference area and REF_LENGTH to the MAC."
+        )
+
     if updates:
         update_config_entries(config_path, updates, create_if_missing=True)
 
+    monitoring_ok = bool(
+        _as_list(entries.get("MARKER_MONITORING", "")) or "MARKER_MONITORING" in updates
+    )
     return {
-        "force_output_ok": bool(_as_list(entries.get("MARKER_MONITORING", "")) or "MARKER_MONITORING" in updates),
+        "force_output_ok": monitoring_ok,
+        # Forces will be WRITTEN but are only meaningful as coefficients when the
+        # reference quantities are real.
+        "coefficients_meaningful": monitoring_ok and not ref_area_bad,
+        "ref_area": ref_area,
         "added": added,
         "notes": notes,
     }
