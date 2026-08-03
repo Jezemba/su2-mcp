@@ -34,6 +34,7 @@ MARKER_FAR= ( farfield )
 MARKER_EULER= ( aircraft )
 MARKER_MONITORING= ( aircraft )
 HISTORY_OUTPUT= ( ITER, RMS_RES, LIFT, DRAG, AERO_COEFF )
+REF_AREA= 192.193
 """
 
 
@@ -108,6 +109,44 @@ class TestHistoryOutput:
         ensure_force_output(cfg)
         hist = str(parse_config_file(cfg)["HISTORY_OUTPUT"]).upper()
         assert "LIFT" in hist and "DRAG" in hist and "AERO_COEFF" in hist
+
+
+class TestReferenceArea:
+    """Verified against official SU2 v8.3.0:
+      CConfig.cpp:1488            addDoubleOption("REF_AREA", RefArea, 1.0)
+      CPhysicalGeometry.cpp:4363  if (RefArea == 0.0) SetRefArea(TotalPositiveZArea)
+    So 1.0 is the (meaningless-for-aircraft) default and 0 means AUTO-COMPUTE.
+    """
+
+    def test_missing_ref_area_is_set_to_auto(self, tmp_path):
+        cfg = _write(tmp_path, MINIMAL_NO_FORCES)
+        report = ensure_force_output(cfg)
+        assert "REF_AREA" in report["added"]
+        assert float(parse_config_file(cfg)["REF_AREA"]) == 0.0
+        assert report["coefficients_meaningful"] is True
+
+    def test_zero_is_valid_not_flagged(self, tmp_path):
+        """0 is AUTO — the best setting. It must not be condemned."""
+        cfg = _write(tmp_path, MINIMAL_NO_FORCES + "REF_AREA= 0\n")
+        report = ensure_force_output(cfg)
+        assert "REF_AREA" not in report["added"]
+        assert report["coefficients_meaningful"] is True
+
+    def test_exactly_one_is_flagged_but_not_overridden(self, tmp_path):
+        """SU2's default leaking through — warn, but never rewrite an explicit
+        value (a unit-chord 2D case is legitimate)."""
+        cfg = _write(tmp_path, MINIMAL_NO_FORCES + "REF_AREA= 1.0\n")
+        report = ensure_force_output(cfg)
+        assert report["coefficients_meaningful"] is False
+        assert any("exactly 1.0" in n for n in report["notes"])
+        assert float(parse_config_file(cfg)["REF_AREA"]) == 1.0
+
+    def test_real_area_is_left_alone(self, tmp_path):
+        cfg = _write(tmp_path, MINIMAL_NO_FORCES + "REF_AREA= 192.193\n")
+        report = ensure_force_output(cfg)
+        assert "REF_AREA" not in report["added"]
+        assert report["coefficients_meaningful"] is True
+        assert float(parse_config_file(cfg)["REF_AREA"]) == pytest.approx(192.193)
 
 
 class TestNonDestructive:

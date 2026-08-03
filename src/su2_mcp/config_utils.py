@@ -230,21 +230,49 @@ def ensure_force_output(config_path: Path) -> dict[str, object]:
     #    into aviary, diverged its trim solver, and produced GTOW 310,918 kg /
     #    fuel 208,551 kg while still reporting itself "coupled".
     #
-    #    We deliberately do NOT invent a value: only the geometry discipline
-    #    knows the reference area. We report it loudly so the caller sets it.
-    ref_area = entries.get("REF_AREA")
-    ref_area_bad = ref_area is None
-    try:
-        ref_area_bad = ref_area_bad or float(ref_area) <= 1.0  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        ref_area_bad = True
-    if ref_area_bad:
+    #    Verified against the official SU2 v8.3.0 source:
+    #      Common/src/CConfig.cpp:1488
+    #        addDoubleOption("REF_AREA", RefArea, 1.0);          <- default 1.0
+    #      Common/src/geometry/CPhysicalGeometry.cpp:4363
+    #        if (config->GetRefArea() == 0.0)
+    #          config->SetRefArea(TotalPositiveZArea);           <- 0 == AUTO
+    #
+    #    So REF_AREA=0 makes SU2 compute the positive-Z projected (planform)
+    #    area from the actual mesh. That is BETTER than any value we could
+    #    supply: it tracks the morphed geometry automatically, which is exactly
+    #    what a coupled MDO wants, and it needs no knowledge we do not have.
+    #    When REF_AREA is absent we therefore set 0 rather than guess a number
+    #    or leave SU2 on its meaningless 1.0 default.
+    ref_area_raw = entries.get("REF_AREA")
+    ref_area_bad = False
+    if ref_area_raw is None:
+        updates["REF_AREA"] = 0
+        added.append("REF_AREA")
         notes.append(
-            f"REF_AREA is {'missing' if ref_area is None else repr(ref_area)} — SU2 will "
-            "non-dimensionalise forces against its 1.0 m^2 default, so CL/CD will be "
-            "wrong by roughly the wing area (observed: CL 15.18 instead of ~0.08). "
-            "Set REF_AREA to the wing reference area and REF_LENGTH to the MAC."
+            "REF_AREA was missing — set to 0, which makes SU2 auto-compute the "
+            "projected planform area from the mesh (CPhysicalGeometry.cpp:4363). "
+            "Left unset, SU2 would use its 1.0 m^2 default and every coefficient "
+            "would be off by roughly the wing area (observed: CL 15.18 vs ~0.08)."
         )
+    else:
+        try:
+            ref_area_val = float(ref_area_raw)
+        except (TypeError, ValueError):
+            ref_area_val = None  # type: ignore[assignment]
+        if ref_area_val is None:
+            ref_area_bad = True
+            notes.append(f"REF_AREA is not numeric ({ref_area_raw!r}) — coefficients may be wrong.")
+        elif ref_area_val == 1.0:
+            # Exactly SU2's default. Could be the default leaking through, or a
+            # deliberate unit-chord 2D case — so warn, do NOT override an
+            # explicit value.
+            ref_area_bad = True
+            notes.append(
+                "REF_AREA is exactly 1.0, SU2's default. For an aircraft mesh this is "
+                "almost certainly unintended and makes CL/CD wrong by roughly the wing "
+                "area. Set REF_AREA=0 to have SU2 compute the planform area from the "
+                "mesh, or give the real reference area."
+            )
 
     if updates:
         update_config_entries(config_path, updates, create_if_missing=True)
@@ -257,7 +285,7 @@ def ensure_force_output(config_path: Path) -> dict[str, object]:
         # Forces will be WRITTEN but are only meaningful as coefficients when the
         # reference quantities are real.
         "coefficients_meaningful": monitoring_ok and not ref_area_bad,
-        "ref_area": ref_area,
+        "ref_area": updates.get("REF_AREA", ref_area_raw),
         "added": added,
         "notes": notes,
     }
