@@ -109,3 +109,119 @@ def update_config_entries(
 
 def _serialize_entries(entries: Iterable[tuple[str, object]]) -> list[str]:
     return [f"{key}= {_format_value(value)}" for key, value in entries]
+
+
+# --------------------------------------------------------------------------- #
+# Force-output guarantee
+# --------------------------------------------------------------------------- #
+
+# Fields that must be in HISTORY_OUTPUT for history.csv to carry CL/CD.
+_FORCE_HISTORY_FIELDS = ("LIFT", "DRAG", "AERO_COEFF")
+# Keys naming the solid-wall marker, in preference order. MARKER_MONITORING is
+# derived from whichever is present — SU2 computes forces ONLY on monitored
+# markers, so without it there is no CL/CD no matter what HISTORY_OUTPUT says.
+_WALL_MARKER_KEYS = ("MARKER_EULER", "MARKER_HEATFLUX", "MARKER_ISOTHERMAL", "MARKER_PLOTTING")
+
+
+def _as_list(value: object) -> list[str]:
+    """Normalise an SU2 list-valued option to bare tokens.
+
+    ``parse_config_text`` splits on commas, so ``( ITER, RMS_RES, LIFT )``
+    already arrives as a LIST whose first/last items still carry the
+    parentheses (``'( ITER'`` … ``'LIFT )'``). Strip them per item, otherwise a
+    membership test for ``AERO_COEFF`` misses ``'AERO_COEFF )'`` and a
+    correctly configured file gets "fixed" every run.
+    """
+    if isinstance(value, (list, tuple)):
+        items = [str(v) for v in value]
+    else:
+        items = [str(value)]
+    tokens: list[str] = []
+    for item in items:
+        cleaned = item.replace("(", " ").replace(")", " ").replace(",", " ")
+        tokens.extend(part for part in cleaned.split() if part)
+    return tokens
+
+
+def ensure_force_output(config_path: Path) -> dict[str, object]:
+    """Guarantee the config will actually WRITE force coefficients.
+
+    An SU2 run can converge perfectly and still produce a history.csv with only
+    residual columns::
+
+        Time_Iter, Outer_Iter, Inner_Iter, "rms[Rho]", "rms[RhoU]", ...
+
+    That happened in a real MAS-Aviary networked run (2026-08-02): the agent ran
+    the solver AND read the history AND re-applied the mission parameters, but
+    there were never any CL/CD to capture, so the mission silently flew on
+    aviary's default drag polar. The aero stage "succeeded" while being
+    physically incapable of coupling.
+
+    Two independent things are required and this enforces both:
+
+      1. ``MARKER_MONITORING`` — SU2 integrates forces ONLY over monitored
+         markers. If it is absent, no amount of HISTORY_OUTPUT produces CL/CD.
+         Derived from the solid-wall marker already in the config.
+      2. ``HISTORY_OUTPUT`` must include LIFT / DRAG / AERO_COEFF.
+
+    Non-destructive: existing values are preserved and only missing pieces are
+    added, so an agent that configured things correctly is untouched. Returns a
+    report of what was added (empty ``added`` == config was already fine).
+    """
+    entries = parse_config_file(config_path)
+    updates: dict[str, object] = {}
+    added: list[str] = []
+    notes: list[str] = []
+
+    # 1. MARKER_MONITORING — derive from the wall marker if absent/empty.
+    monitoring = _as_list(entries.get("MARKER_MONITORING", ""))
+    if not monitoring:
+        wall: list[str] = []
+        source = None
+        for key in _WALL_MARKER_KEYS:
+            if key in entries:
+                candidate = _as_list(entries[key])
+                if candidate:
+                    wall, source = candidate, key
+                    break
+        if wall:
+            updates["MARKER_MONITORING"] = f"( {', '.join(wall)} )"
+            added.append("MARKER_MONITORING")
+            notes.append(
+                f"MARKER_MONITORING was missing — derived ( {', '.join(wall)} ) from {source}. "
+                "SU2 integrates forces only over monitored markers, so without it "
+                "history.csv carries no CL/CD."
+            )
+        else:
+            notes.append(
+                "MARKER_MONITORING is missing and no solid-wall marker "
+                f"({'/'.join(_WALL_MARKER_KEYS)}) was found to derive it from — "
+                "this run CANNOT produce force coefficients."
+            )
+
+    # 2. HISTORY_OUTPUT must carry the force fields.
+    history = _as_list(entries.get("HISTORY_OUTPUT", ""))
+    if not history:
+        updates["HISTORY_OUTPUT"] = "( ITER, RMS_RES, LIFT, DRAG, AERO_COEFF )"
+        added.append("HISTORY_OUTPUT")
+        notes.append("HISTORY_OUTPUT was missing — set to include ITER, RMS_RES and the force fields.")
+    else:
+        upper = {h.upper() for h in history}
+        missing = [f for f in _FORCE_HISTORY_FIELDS if f not in upper]
+        if missing:
+            merged = history + missing
+            updates["HISTORY_OUTPUT"] = f"( {', '.join(merged)} )"
+            added.append("HISTORY_OUTPUT")
+            notes.append(
+                f"HISTORY_OUTPUT was missing {', '.join(missing)} — appended so "
+                "history.csv carries CL/CD."
+            )
+
+    if updates:
+        update_config_entries(config_path, updates, create_if_missing=True)
+
+    return {
+        "force_output_ok": bool(_as_list(entries.get("MARKER_MONITORING", "")) or "MARKER_MONITORING" in updates),
+        "added": added,
+        "notes": notes,
+    }

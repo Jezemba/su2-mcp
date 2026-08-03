@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from su2_mcp.config_utils import ensure_force_output
 from su2_mcp.su2_runner import SU2Runner, build_last_run_metadata
 from su2_mcp.tools.session import SESSION_MANAGER, _error
 
@@ -33,11 +34,26 @@ def run_su2_solver(
             if config_override_path
             else record.config_path
         )
+        # Guarantee the run will actually WRITE force coefficients before we
+        # spend the solve. Without MARKER_MONITORING (and LIFT/DRAG/AERO_COEFF
+        # in HISTORY_OUTPUT) SU2 converges happily and emits a history.csv of
+        # residuals only — no CL/CD — so a downstream mission silently falls
+        # back to its default drag polar. Observed in a real MAS-Aviary
+        # networked run 2026-08-02. Non-destructive: only missing pieces are
+        # added, so a correctly configured session is untouched.
+        force_output: dict[str, object] = {}
+        try:
+            force_output = ensure_force_output(config_path)
+        except Exception as exc:  # never block a solve on the guard itself
+            force_output = {"error": f"force-output check failed: {exc}"}
+
         runner = SU2Runner(record.workdir)
         result = runner.run(solver, config_path, max_runtime_seconds, capture_log_lines)
         if "error" not in result:
             metadata = build_last_run_metadata(result)
             SESSION_MANAGER.record_run(session_id, metadata)
+        if isinstance(result, dict):
+            result["force_output"] = force_output
         return result
     except KeyError as exc:
         return _error(str(exc), error_type="not_found")
