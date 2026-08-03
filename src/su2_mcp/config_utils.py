@@ -115,8 +115,13 @@ def _serialize_entries(entries: Iterable[tuple[str, object]]) -> list[str]:
 # Force-output guarantee
 # --------------------------------------------------------------------------- #
 
-# Fields that must be in HISTORY_OUTPUT for history.csv to carry CL/CD.
-_FORCE_HISTORY_FIELDS = ("LIFT", "DRAG", "AERO_COEFF")
+# Field group that must be in HISTORY_OUTPUT for history.csv to carry CL/CD.
+# AERO_COEFF alone expands to CL, CD, CSF, CMx, CMy, CMz — it is sufficient.
+# Do NOT also add LIFT/DRAG: they expand to CL and CD again, and SU2 then emits
+# DUPLICATE columns (observed live: ..."CD","CD","CL","CL","CSF",...). Harmless
+# to SU2 but confusing to any reader. If the author already listed LIFT/DRAG we
+# leave them alone — this only controls what we ADD.
+_FORCE_HISTORY_FIELDS = ("AERO_COEFF",)
 # Keys naming the solid-wall marker, in preference order. MARKER_MONITORING is
 # derived from whichever is present — SU2 computes forces ONLY on monitored
 # markers, so without it there is no CL/CD no matter what HISTORY_OUTPUT says.

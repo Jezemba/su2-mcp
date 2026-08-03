@@ -76,8 +76,18 @@ class TestHistoryOutput:
         cfg = _write(tmp_path, MINIMAL_NO_FORCES)
         ensure_force_output(cfg)
         hist = str(parse_config_file(cfg)["HISTORY_OUTPUT"]).upper()
-        for field in ("ITER", "RMS_RES", "LIFT", "DRAG", "AERO_COEFF"):
+        # Existing fields preserved, AERO_COEFF added.
+        for field in ("ITER", "RMS_RES", "AERO_COEFF"):
             assert field in hist
+
+    def test_no_duplicate_force_groups_added(self, tmp_path):
+        """AERO_COEFF already expands to CL/CD — adding LIFT/DRAG too makes SU2
+        emit DUPLICATE "CD","CD","CL","CL" columns (observed live)."""
+        cfg = _write(tmp_path, MINIMAL_NO_FORCES)
+        ensure_force_output(cfg)
+        hist = str(parse_config_file(cfg)["HISTORY_OUTPUT"]).upper()
+        assert "LIFT" not in hist
+        assert "DRAG" not in hist
 
     def test_created_when_absent(self, tmp_path):
         cfg = _write(tmp_path, "MARKER_EULER= ( aircraft )\n")
@@ -90,7 +100,14 @@ class TestHistoryOutput:
         cfg = _write(tmp_path, "MARKER_EULER= ( a )\nHISTORY_OUTPUT= ( ITER, RMS_RES, LINSOL )\n")
         ensure_force_output(cfg)
         hist = str(parse_config_file(cfg)["HISTORY_OUTPUT"]).upper()
-        assert "LINSOL" in hist and "LIFT" in hist
+        assert "LINSOL" in hist and "AERO_COEFF" in hist
+
+    def test_author_supplied_lift_drag_are_left_alone(self, tmp_path):
+        """We only control what we ADD — an author's own LIFT/DRAG stay."""
+        cfg = _write(tmp_path, "MARKER_EULER= ( a )\nHISTORY_OUTPUT= ( ITER, LIFT, DRAG )\n")
+        ensure_force_output(cfg)
+        hist = str(parse_config_file(cfg)["HISTORY_OUTPUT"]).upper()
+        assert "LIFT" in hist and "DRAG" in hist and "AERO_COEFF" in hist
 
 
 class TestNonDestructive:

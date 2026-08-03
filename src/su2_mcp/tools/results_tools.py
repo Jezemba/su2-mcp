@@ -81,7 +81,37 @@ def read_history_csv(
         with full_path.open("r", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             headers = reader.fieldnames or []
-            filtered_headers = columns or headers
+
+            # SU2 writes padded, quoted headers -- e.g. '       "CD"       '.
+            # A caller asking for "CD" (or for a HISTORY_OUTPUT group name like
+            # "DRAG") previously matched NOTHING: every requested key failed the
+            # `key in row` test, so each row collapsed to {} while the response
+            # still echoed the requested names as `columns`. The caller saw a
+            # well-formed reply with N rows and no data, and no error.
+            #
+            # Seen live 2026-08-03: an agent asked for
+            # ['ITER','RMS_RES','LIFT','DRAG'] and got 75 empty rows, so the
+            # mission silently flew uncoupled even though SU2 had converged and
+            # written CL/CD correctly.
+            #
+            # Match on NORMALISED names (strip padding/quotes) and report
+            # anything that did not resolve.
+            canon_to_actual: dict[str, str] = {}
+            for h in headers:
+                canon_to_actual.setdefault(_canon_header(h), h)
+
+            resolved: list[tuple[str, str]] = []  # (requested, actual header)
+            unmatched: list[str] = []
+            if columns:
+                for requested in columns:
+                    actual = canon_to_actual.get(_canon_header(requested))
+                    if actual is None:
+                        unmatched.append(requested)
+                    else:
+                        resolved.append((requested, actual))
+            else:
+                resolved = [(h, h) for h in headers]
+
             rows: list[dict[str, object]] = []
             for _ in range(skip_rows):
                 next(reader, None)
@@ -90,20 +120,41 @@ def read_history_csv(
                     break
                 rows.append(
                     {
-                        key: _coerce_value(row.get(key))
-                        for key in filtered_headers
-                        if key in row
+                        requested: _coerce_value(row.get(actual))
+                        for requested, actual in resolved
                     }
                 )
-        return {
-            "columns": filtered_headers,
+
+        response: dict[str, object] = {
+            "columns": [requested for requested, _ in resolved],
             "rows": rows,
             "total_rows": skip_rows + len(rows),
         }
+        if unmatched:
+            # Fail LOUD rather than returning structurally-valid empty rows.
+            response["unmatched_columns"] = unmatched
+            response["available_columns"] = [_canon_header(h) for h in headers]
+            response["warning"] = (
+                f"Requested column(s) {unmatched} are not in this history file. "
+                f"Available: {[_canon_header(h) for h in headers]}. "
+                "Note these are CSV column names (e.g. CL, CD), NOT HISTORY_OUTPUT "
+                "group names (e.g. LIFT, DRAG, AERO_COEFF). Omit `columns` to get "
+                "every column."
+            )
+        return response
     except KeyError as exc:
         return _error(str(exc), error_type="not_found")
     except Exception as exc:  # pragma: no cover
         return _error("Failed to parse history CSV", details=str(exc))
+
+
+def _canon_header(name: str) -> str:
+    """Normalise a CSV header for matching.
+
+    SU2 pads and quotes its history headers (``'       "CD"       '``), so raw
+    string equality against a caller-supplied ``"CD"`` always fails.
+    """
+    return str(name).strip().strip('"').strip("'").strip()
 
 
 def _coerce_value(value: str | None) -> object | None:
