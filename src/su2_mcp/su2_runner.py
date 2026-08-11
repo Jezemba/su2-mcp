@@ -29,6 +29,18 @@ _BAD_NAME_RE = re.compile(r"Line\s+(\d+)\s+(\S+?):\s*invalid option name", re.I)
 _BAD_VALUE_RE = re.compile(r"(\S+?):\s*invalid option value\s*(\S*)", re.I)
 _SUGGEST_RE = re.compile(r"Did you mean,?\s*([^?]*)\?", re.I)
 
+# A second, nastier class: a REQUIRED option is missing, and SU2 8.3 names it by
+# its DEPRECATED v6 spelling. Observed live:
+#
+#   "PHYSICAL_PROBLEM must be set in the configuration file"
+#
+# but PHYSICAL_PROBLEM is exactly what SU2 8.3 rejects as "invalid option name"
+# — the modern spelling is SOLVER. An agent that follows the error literally
+# loops: set PHYSICAL_PROBLEM -> invalid option name -> set it again. We
+# translate through the existing deprecation map so the caller is told the name
+# SU2 will actually accept.
+_MISSING_RE = re.compile(r"(\S+?)\s+must be set in the configuration file", re.I)
+
 
 def parse_config_errors(log_text: str) -> list[dict[str, object]]:
     """Extract SU2's config-parsing complaints as structured, actionable items.
@@ -62,6 +74,21 @@ def parse_config_errors(log_text: str) -> list[dict[str, object]]:
                     "problem": "invalid option value",
                     "value": m.group(2).rstrip(".") or None,
                 }
+            else:
+                m = _MISSING_RE.search(line)
+                if m:
+                    from su2_mcp.config_utils import DEPRECATED_OPTIONS
+
+                    named = m.group(1)
+                    modern = DEPRECATED_OPTIONS.get(named.upper())
+                    entry = {"option": named, "problem": "required option missing"}
+                    if modern:
+                        entry["did_you_mean"] = [modern]
+                        entry["note"] = (
+                            f"SU2 names this by its deprecated spelling. Set "
+                            f"{modern} — {named} is rejected as an invalid option "
+                            f"name in this SU2 version."
+                        )
         if entry is None:
             continue
         # SU2 puts "Did you mean ...?" on this line or the next one.

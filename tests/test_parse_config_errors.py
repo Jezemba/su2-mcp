@@ -75,6 +75,36 @@ class TestOtherObservedMistakes:
         assert "did_you_mean" not in e
 
 
+class TestMissingRequiredOption:
+    """SU2 8.3 reports a missing SOLVER by its DEPRECATED name, which SU2 8.3
+    itself then rejects as invalid — an agent following the message literally
+    loops. Observed live 2026-08-04."""
+
+    REAL = (
+        'Error in \\"void CConfig::SetPostprocessing(SU2_COMPONENT, short unsigned int, '
+        'short unsigned int)\\": '
+        "\\n-------------------------------------------------------------------------"
+        "\\nPHYSICAL_PROBLEM must be set in the configuration file"
+        "\\n------------------------------ Error Exit ------------------------------"
+    )
+
+    def test_missing_option_detected(self):
+        e = parse_config_errors(self.REAL)
+        assert len(e) == 1
+        assert e[0]["option"] == "PHYSICAL_PROBLEM"
+        assert e[0]["problem"] == "required option missing"
+
+    def test_translated_to_the_name_su2_accepts(self):
+        e = parse_config_errors(self.REAL)[0]
+        assert e["did_you_mean"] == ["SOLVER"]
+        assert "deprecated" in e["note"]
+
+    def test_non_deprecated_missing_option_has_no_suggestion(self):
+        e = parse_config_errors("MESH_FILENAME must be set in the configuration file")[0]
+        assert e["option"] == "MESH_FILENAME"
+        assert "did_you_mean" not in e
+
+
 class TestNoFalsePositives:
     @pytest.mark.parametrize("log", [
         "",
