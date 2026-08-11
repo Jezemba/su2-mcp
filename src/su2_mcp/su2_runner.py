@@ -99,6 +99,22 @@ def parse_config_errors(log_text: str) -> list[dict[str, object]]:
                     tok.strip() for tok in s.group(1).split(",") if tok.strip()
                 ]
                 break
+
+        # SU2's suggestion is a STRING-SIMILARITY guess and is semantically wrong
+        # for deprecated options. Observed live: PHYSICAL_PROBLEM (the v6 name for
+        # SOLVER) drew "Did you mean MATH_PROBLEM?" — the closest spelling, not the
+        # right option. Relaying that verbatim sends the caller somewhere useless,
+        # so put the known-correct replacement FIRST and say why.
+        from su2_mcp.config_utils import DEPRECATED_OPTIONS
+
+        modern = DEPRECATED_OPTIONS.get(str(entry.get("option", "")).upper())
+        if modern:
+            suggestions = [s for s in entry.get("did_you_mean", []) if s != modern]
+            entry["did_you_mean"] = [modern] + suggestions
+            entry["note"] = (
+                f"{entry['option']} is the deprecated name for {modern}; use {modern}. "
+                "SU2's own suggestion here is a spelling match, not the correct option."
+            )
         errors.append(entry)
     return errors
 

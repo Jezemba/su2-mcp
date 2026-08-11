@@ -105,6 +105,40 @@ class TestMissingRequiredOption:
         assert "did_you_mean" not in e
 
 
+class TestSU2SuggestionIsOverriddenWhenWrong:
+    """SU2's "Did you mean" is a STRING-SIMILARITY guess. For deprecated options
+    it is semantically wrong, and relaying it verbatim sends the caller nowhere
+    useful. Observed live 2026-08-04: PHYSICAL_PROBLEM (the v6 name for SOLVER)
+    drew "Did you mean MATH_PROBLEM?"."""
+
+    REAL = (
+        "Line 1 PHYSICAL_PROBLEM: invalid option name. Check current SU2 options in "
+        "config_template.cfg.\nDid you mean MATH_PROBLEM?"
+    )
+
+    def test_correct_option_is_offered_first(self):
+        e = parse_config_errors(self.REAL)[0]
+        assert e["did_you_mean"][0] == "SOLVER"
+
+    def test_su2s_wrong_guess_is_kept_but_demoted(self):
+        e = parse_config_errors(self.REAL)[0]
+        assert "MATH_PROBLEM" in e["did_you_mean"]
+        assert e["did_you_mean"].index("SOLVER") < e["did_you_mean"].index("MATH_PROBLEM")
+
+    def test_note_explains_the_override(self):
+        e = parse_config_errors(self.REAL)[0]
+        assert "deprecated name for SOLVER" in e["note"]
+        assert "spelling match" in e["note"]
+
+    def test_non_deprecated_option_keeps_su2s_suggestion_untouched(self):
+        """MACH -> MACH_NUMBER is a genuine SU2 suggestion; do not interfere."""
+        e = parse_config_errors(
+            "Line 4 MACH: invalid option name.\nDid you mean MACH_NUMBER?"
+        )[0]
+        assert e["did_you_mean"] == ["MACH_NUMBER"]
+        assert "note" not in e
+
+
 class TestNoFalsePositives:
     @pytest.mark.parametrize("log", [
         "",
