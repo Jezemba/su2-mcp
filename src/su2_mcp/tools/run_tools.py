@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from su2_mcp.config_utils import ensure_force_output
-from su2_mcp.su2_runner import SU2Runner, build_last_run_metadata
+from su2_mcp.su2_runner import SU2Runner, build_last_run_metadata, parse_config_errors
 from su2_mcp.tools.session import SESSION_MANAGER, _error
 
 
@@ -54,6 +54,19 @@ def run_su2_solver(
             SESSION_MANAGER.record_run(session_id, metadata)
         if isinstance(result, dict):
             result["force_output"] = force_output
+            # Surface SU2's own config complaints as structured, actionable
+            # items instead of leaving them buried in the log_tail blob. SU2
+            # names the offending option AND the correct spelling, so a caller
+            # can fix it in one step rather than re-guessing.
+            cfg_errors = parse_config_errors(str(result.get("log_tail", "")))
+            if cfg_errors:
+                result["config_errors"] = cfg_errors
+                result["hint"] = (
+                    "SU2 rejected the configuration and did NOT solve, so there is "
+                    "no history and no CL/CD. Fix the options listed in "
+                    "config_errors (use the did_you_mean spellings) via "
+                    "update_config_entries, then re-run."
+                )
         return result
     except KeyError as exc:
         return _error(str(exc), error_type="not_found")

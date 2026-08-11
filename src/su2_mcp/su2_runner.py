@@ -2,12 +2,78 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 from collections.abc import Mapping
 from pathlib import Path
 
 from su2_mcp.session_manager import LastRunMetadata
+
+# SU2 rejects a bad config before solving and says EXACTLY what is wrong,
+# including the correct spelling:
+#
+#   Line 9 MARKER_BODY: invalid option name. Check current SU2 options in
+#   config_template.cfg.
+#   Did you mean MARKER_EMISSIVITY?
+#   TIME_DISCRE_FLOW: invalid option value IMPLICIT.
+#   Did you mean, ADER_DG, CLASSICAL_RK4_EXPLICIT, EULER_EXPLICIT, EULER_IMPLICIT, ...?
+#
+# That guidance was buried inside the `log_tail` prose blob, so agents could not
+# act on it. Measured across two MAS-Aviary sweeps: SU2 failed 42/46 and 20/25
+# solves, roughly two thirds of them on invalid options — which is why the aero
+# coupling almost never happened. The mistakes are near-misses (GREEN-GAUSS vs
+# GREEN_GAUSS, IMPLICIT vs EULER_IMPLICIT), so a structured, actionable error
+# lets the caller self-correct in one step.
+_BAD_NAME_RE = re.compile(r"Line\s+(\d+)\s+(\S+?):\s*invalid option name", re.I)
+_BAD_VALUE_RE = re.compile(r"(\S+?):\s*invalid option value\s*(\S*)", re.I)
+_SUGGEST_RE = re.compile(r"Did you mean,?\s*([^?]*)\?", re.I)
+
+
+def parse_config_errors(log_text: str) -> list[dict[str, object]]:
+    """Extract SU2's config-parsing complaints as structured, actionable items.
+
+    Each entry carries the offending option, whether the NAME or the VALUE was
+    rejected, and SU2's own suggested replacements. Returns [] when the log
+    holds no config errors (e.g. a solve that failed for a different reason).
+    """
+    if not log_text:
+        return []
+    # SU2 writes these as literal "\n" inside the JSON string as well as real
+    # newlines depending on how the log was captured; normalise both.
+    text = log_text.replace("\\n", "\n")
+    lines = [ln.strip() for ln in text.splitlines()]
+
+    errors: list[dict[str, object]] = []
+    for i, line in enumerate(lines):
+        entry: dict[str, object] | None = None
+        m = _BAD_NAME_RE.search(line)
+        if m:
+            entry = {
+                "option": m.group(2),
+                "problem": "invalid option name",
+                "line": int(m.group(1)),
+            }
+        else:
+            m = _BAD_VALUE_RE.search(line)
+            if m:
+                entry = {
+                    "option": m.group(1),
+                    "problem": "invalid option value",
+                    "value": m.group(2).rstrip(".") or None,
+                }
+        if entry is None:
+            continue
+        # SU2 puts "Did you mean ...?" on this line or the next one.
+        for probe in (line, lines[i + 1] if i + 1 < len(lines) else ""):
+            s = _SUGGEST_RE.search(probe)
+            if s:
+                entry["did_you_mean"] = [
+                    tok.strip() for tok in s.group(1).split(",") if tok.strip()
+                ]
+                break
+        errors.append(entry)
+    return errors
 
 
 class SU2Runner:
