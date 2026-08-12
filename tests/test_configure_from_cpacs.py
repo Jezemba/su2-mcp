@@ -72,8 +72,8 @@ def _entries(session):
 class TestReferencesComeFromCPACS:
     def test_ref_area_and_length_read_from_geometry(self, session):
         out = config_tools.configure_from_cpacs(session["sid"], session["cpacs"])
-        assert out["from_cpacs"]["REF_AREA"] == pytest.approx(239.4)
-        assert out["from_cpacs"]["REF_LENGTH"] == pytest.approx(5.219)
+        assert out["references"]["REF_AREA"] == pytest.approx(239.4)
+        assert out["references"]["REF_LENGTH"] == pytest.approx(5.219)
         e = _entries(session)
         assert float(e["REF_AREA"]) == pytest.approx(239.4)
         assert float(e["REF_LENGTH"]) == pytest.approx(5.219)
@@ -83,11 +83,37 @@ class TestReferencesComeFromCPACS:
         morphed = tmp_path / "morphed.xml"
         morphed.write_text(CPACS.replace("<area>239.4</area>", "<area>122.4</area>"))
         out = config_tools.configure_from_cpacs(session["sid"], str(morphed))
-        assert out["from_cpacs"]["REF_AREA"] == pytest.approx(122.4)
+        assert out["references"]["REF_AREA"] == pytest.approx(122.4)
 
     def test_missing_cpacs_is_reported(self, session):
         out = config_tools.configure_from_cpacs(session["sid"], "/nope/missing.xml")
         assert out["error"]["type"] == "not_found"
+
+
+class TestComputedGeometryBeatsDeclaredCPACS:
+    """Morphing does NOT update CPACS's <reference><area>. Measured on a real
+    morphed export: the file still declared area 122.4 while get_wing_summary
+    computed 65.98 for that same geometry. Trusting the declaration would feed
+    SU2 a stale reference and reproduce the wrong-CL bug (B12)."""
+
+    def test_explicit_reference_wins(self, session):
+        out = config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"], ref_area=65.985, ref_length=4.193
+        )
+        assert out["references"]["REF_AREA"] == pytest.approx(65.985)
+        assert out["references"]["ref_area_source"] == "computed_geometry"
+        assert float(_entries(session)["REF_AREA"]) == pytest.approx(65.985)
+
+    def test_declared_fallback_is_flagged_as_possibly_stale(self, session):
+        out = config_tools.configure_from_cpacs(session["sid"], session["cpacs"])
+        assert out["references"]["ref_area_source"] == "cpacs_declared"
+        assert any("BASELINE" in w for w in out["reference_warnings"])
+
+    def test_no_warning_when_both_supplied(self, session):
+        out = config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"], ref_area=65.985, ref_length=4.193
+        )
+        assert "reference_warnings" not in out
 
 
 class TestForceOutputGuaranteedByConstruction:

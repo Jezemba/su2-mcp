@@ -14,6 +14,8 @@ def configure_from_cpacs(
     cpacs_file_path: str,
     overrides: dict[str, Any] | None = None,
     mesh_file_name: str = "mesh.su2",
+    ref_area: float | None = None,
+    ref_length: float | None = None,
 ) -> dict[str, object]:
     """Build this session's SU2 config FROM the CPACS file, not by hand.
 
@@ -58,6 +60,36 @@ def configure_from_cpacs(
 
         derived = read_from_cpacs(path.read_text(encoding="utf-8"))
 
+        # CPACS's <reference><area> is a DECLARED value and morphing does NOT
+        # update it. Measured on a real morphed export: the file still said
+        # area 122.4 / length 4.193 while TiGL's get_wing_summary computed
+        # 65.98 for the same geometry. Trusting the declared value would feed
+        # SU2 a stale reference and reproduce the wrong-CL class of bug.
+        #
+        # So an explicitly supplied reference (from get_wing_summary, i.e. the
+        # geometry as actually built) always wins; the declared value is only a
+        # fallback, and is flagged as possibly stale when used.
+        ref_notes: list[str] = []
+        if ref_area is not None:
+            derived["ref_area_m2"] = float(ref_area)
+            ref_source_area = "computed_geometry"
+        else:
+            ref_source_area = "cpacs_declared"
+            ref_notes.append(
+                "REF_AREA came from the CPACS <reference><area> element, which morphing "
+                "does NOT update — it may describe the BASELINE wing, not this design. "
+                "Pass ref_area from get_wing_summary for a design-tracking value."
+            )
+        if ref_length is not None:
+            derived["ref_length_m"] = float(ref_length)
+            ref_source_length = "computed_geometry"
+        else:
+            ref_source_length = "cpacs_declared"
+            ref_notes.append(
+                "REF_LENGTH came from the CPACS declaration; pass ref_length "
+                "(the MAC from get_wing_summary) for a design-tracking value."
+            )
+
         # Base config: valid SU2 8.3 Euler setup with force output guaranteed.
         entries: dict[str, Any] = {
             "SOLVER": "EULER",
@@ -94,13 +126,17 @@ def configure_from_cpacs(
 
         result: dict[str, object] = {
             "config_path": str(record.config_path),
-            "from_cpacs": {
+            "references": {
                 "REF_AREA": derived["ref_area_m2"],
                 "REF_LENGTH": derived["ref_length_m"],
+                "ref_area_source": ref_source_area,
+                "ref_length_source": ref_source_length,
             },
             "keys_written": sorted(entries),
             "overrides_applied": sorted(overrides) if overrides else [],
         }
+        if ref_notes:
+            result["reference_warnings"] = ref_notes
         if remapped:
             result["deprecated_remapped"] = remapped
         return result
