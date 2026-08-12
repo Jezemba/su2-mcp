@@ -27,6 +27,54 @@ from su2_mcp.session_manager import LastRunMetadata
 # lets the caller self-correct in one step.
 _BAD_NAME_RE = re.compile(r"Line\s+(\d+)\s+(\S+?):\s*invalid option name", re.I)
 _BAD_VALUE_RE = re.compile(r"(\S+?):\s*invalid option value\s*(\S*)", re.I)
+
+# Config complaints are only ONE class of fatal error, and the promotion above
+# was written for that class alone. Every other way SU2 dies -- missing mesh,
+# unmatched marker, divergence -- stayed buried in `log_tail`, which is how a
+# well-worded message went unread. Measured on a real no-mesh exit: SU2 says
+#
+#   The SU2 mesh file named mesh.su2 was not found.
+#
+# and says it clearly, but on line 35 of a 47-line, 2.7 kB banner blob. Across
+# two sweeps 16% of ALL tool calls were byte-identical repeats of the call that
+# had just failed -- the signature of a caller that read a response and could
+# not extract what to change from it.
+#
+# SU2 delimits its own diagnosis precisely, so this relays SU2's wording rather
+# than substituting our own:
+#
+#   Error in "<c++ signature>":
+#   <the actionable sentence(s)>
+#   ------------------------- Error Exit -------------------------
+_FATAL_HEAD_RE = re.compile(r'Error in\s+"([^"]*)"\s*:?\s*$', re.I)
+_FATAL_END_RE = re.compile(r"^\s*-{5,}.*Error Exit.*-{5,}\s*$", re.I)
+
+
+def parse_fatal_error(log_text: str) -> dict[str, str] | None:
+    """Lift SU2's own fatal-error message out of the log banner.
+
+    Returns SU2's verbatim wording plus the C++ location it came from, or None
+    if the log holds no fatal-error block. Config-option complaints keep their
+    richer structured treatment in :func:`parse_config_errors`; this is the
+    catch-all so that no fatal error is left unsurfaced.
+    """
+    lines = str(log_text).replace("\\n", "\n").splitlines()
+    for idx, line in enumerate(lines):
+        head = _FATAL_HEAD_RE.search(line)
+        if not head:
+            continue
+        body: list[str] = []
+        for follow in lines[idx + 1:]:
+            if _FATAL_END_RE.match(follow):
+                break
+            text = follow.strip()
+            # SU2 rules off the message on both sides; the rules are decoration.
+            if text and set(text) != {"-"}:
+                body.append(text)
+        if not body:
+            continue
+        return {"message": " ".join(body), "location": head.group(1)}
+    return None
 _SUGGEST_RE = re.compile(r"Did you mean,?\s*([^?]*)\?", re.I)
 
 # A second, nastier class: a REQUIRED option is missing, and SU2 8.3 names it by

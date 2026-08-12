@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from su2_mcp.config_utils import ensure_force_output
-from su2_mcp.su2_runner import SU2Runner, build_last_run_metadata, parse_config_errors
+from su2_mcp.su2_runner import (
+    SU2Runner,
+    build_last_run_metadata,
+    parse_config_errors,
+    parse_fatal_error,
+)
 from su2_mcp.tools.session import SESSION_MANAGER, _error
 
 
@@ -67,6 +72,19 @@ def run_su2_solver(
                     "config_errors (use the did_you_mean spellings) via "
                     "update_config_entries, then re-run."
                 )
+            elif not result.get("success"):
+                # Any OTHER fatal exit. SU2 words these well but prints them
+                # mid-banner, so promote its own text rather than leaving the
+                # caller to find line 35 of 47.
+                fatal = parse_fatal_error(str(result.get("log_tail", "")))
+                if fatal:
+                    result["solver_error"] = fatal["message"]
+                    result["solver_error_location"] = fatal["location"]
+                    result["hint"] = (
+                        f"SU2 exited without solving: {fatal['message']} There is no "
+                        "history and no CL/CD. Resolve that condition before re-running; "
+                        "re-issuing the same call unchanged will fail identically."
+                    )
         return result
     except KeyError as exc:
         return _error(str(exc), error_type="not_found")

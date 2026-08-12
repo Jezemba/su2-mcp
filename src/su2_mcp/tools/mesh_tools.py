@@ -144,12 +144,20 @@ def analyze_mesh(
     except KeyError as exc:
         return _error(str(exc), error_type="not_found")
 
-    mesh_path = record.workdir / record.mesh_filename
-    if not mesh_path.exists():
-        return _error("No mesh file found in session", error_type="not_found")
+    # SessionRecord has no `mesh_filename` -- the field is `mesh_path`. Both uses
+    # below raised AttributeError, so analyze_mesh failed on EVERY call, mesh or
+    # no mesh, and did so as an unhandled traceback rather than a tool error. No
+    # test ever ran it with a mesh present, which is how it survived.
+    mesh_path = record.mesh_path
+    if mesh_path is None or not Path(mesh_path).exists():
+        return _error(
+            "No mesh file in this session. Store one with set_mesh (or supply "
+            "initial_mesh when creating the session) before analyzing it.",
+            error_type="not_found",
+        )
 
     stats: dict[str, object] = {
-        "mesh_file": record.mesh_filename,
+        "mesh_file": Path(mesh_path).name,
         "file_size_bytes": mesh_path.stat().st_size,
     }
 

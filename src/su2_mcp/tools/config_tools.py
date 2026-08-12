@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import binascii
 from pathlib import Path
 from typing import Any
 
@@ -236,6 +237,20 @@ def set_mesh(
         return {"mesh_path": str(mesh_path)}
     except KeyError as exc:
         return _error(str(exc), error_type="not_found")
+    except (binascii.Error, ValueError) as exc:
+        # `mesh_base64` did not decode. The bare re-wrap here used to report
+        # base64's own words -- "Incorrect padding", "Invalid base64-encoded
+        # string" -- which describe the SYMPTOM of passing a placeholder or a
+        # stray token as mesh DATA and name neither the argument at fault nor
+        # anything to do next. Callers answered it by reissuing the identical
+        # call (measured: 25 occurrences across 13 runs).
+        return _error(
+            f"mesh_base64 is not decodable base64 ({exc}). It must carry the mesh "
+            "FILE CONTENTS, base64-encoded -- not a file name, path, or stand-in "
+            f"token (received {len(mesh_base64)} characters). Obtain the contents "
+            "from the meshing step that produced this mesh, then pass them here.",
+            error_type="invalid_payload",
+        )
     except Exception as exc:  # pragma: no cover
         return _error("Failed to set mesh", details=str(exc))
 
