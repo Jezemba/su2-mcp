@@ -42,7 +42,7 @@ def run_su2_solver(
         # Guarantee the run will actually WRITE force coefficients before we
         # spend the solve. Without MARKER_MONITORING (and LIFT/DRAG/AERO_COEFF
         # in HISTORY_OUTPUT) SU2 converges happily and emits a history.csv of
-        # residuals only — no CL/CD — so a downstream mission silently falls
+        # residuals only -- no CL/CD -- so a downstream mission silently falls
         # back to its default drag polar. Observed in a real MAS-Aviary
         # networked run 2026-08-02. Non-destructive: only missing pieces are
         # added, so a correctly configured session is untouched.

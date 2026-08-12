@@ -21,7 +21,7 @@ from su2_mcp.session_manager import LastRunMetadata
 #
 # That guidance was buried inside the `log_tail` prose blob, so agents could not
 # act on it. Measured across two MAS-Aviary sweeps: SU2 failed 42/46 and 20/25
-# solves, roughly two thirds of them on invalid options — which is why the aero
+# solves, roughly two thirds of them on invalid options -- which is why the aero
 # coupling almost never happened. The mistakes are near-misses (GREEN-GAUSS vs
 # GREEN_GAUSS, IMPLICIT vs EULER_IMPLICIT), so a structured, actionable error
 # lets the caller self-correct in one step.
@@ -83,7 +83,7 @@ _SUGGEST_RE = re.compile(r"Did you mean,?\s*([^?]*)\?", re.I)
 #   "PHYSICAL_PROBLEM must be set in the configuration file"
 #
 # but PHYSICAL_PROBLEM is exactly what SU2 8.3 rejects as "invalid option name"
-# — the modern spelling is SOLVER. An agent that follows the error literally
+# -- the modern spelling is SOLVER. An agent that follows the error literally
 # loops: set PHYSICAL_PROBLEM -> invalid option name -> set it again. We
 # translate through the existing deprecation map so the caller is told the name
 # SU2 will actually accept.
@@ -134,7 +134,7 @@ def parse_config_errors(log_text: str) -> list[dict[str, object]]:
                         entry["did_you_mean"] = [modern]
                         entry["note"] = (
                             f"SU2 names this by its deprecated spelling. Set "
-                            f"{modern} — {named} is rejected as an invalid option "
+                            f"{modern} -- {named} is rejected as an invalid option "
                             f"name in this SU2 version."
                         )
         if entry is None:
@@ -150,7 +150,7 @@ def parse_config_errors(log_text: str) -> list[dict[str, object]]:
 
         # SU2's suggestion is a STRING-SIMILARITY guess and is semantically wrong
         # for deprecated options. Observed live: PHYSICAL_PROBLEM (the v6 name for
-        # SOLVER) drew "Did you mean MATH_PROBLEM?" — the closest spelling, not the
+        # SOLVER) drew "Did you mean MATH_PROBLEM?" -- the closest spelling, not the
         # right option. Relaying that verbatim sends the caller somewhere useless,
         # so put the known-correct replacement FIRST and say why.
         from su2_mcp.config_utils import DEPRECATED_OPTIONS

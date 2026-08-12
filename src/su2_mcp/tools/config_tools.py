@@ -23,15 +23,15 @@ def configure_from_cpacs(
     Reference quantities are the aircraft's, so they must come from the aircraft
     definition rather than being retyped. This reads ``REF_AREA`` and
     ``REF_LENGTH`` straight out of the CPACS geometry and writes a complete,
-    valid Euler config around them — including ``MARKER_MONITORING`` and force
+    valid Euler config around them -- including ``MARKER_MONITORING`` and force
     fields in ``HISTORY_OUTPUT``, without which SU2 solves happily and writes no
     CL/CD at all.
 
     Why this exists: agents were composing the whole config by hand from a dict
     embedded in their prompt, and drifting. Across two MAS-Aviary sweeps SU2
-    rejected 80-91% of configs — ``PHYSICAL_PROBLEM`` (the v6 name for SOLVER),
+    rejected 80-91% of configs -- ``PHYSICAL_PROBLEM`` (the v6 name for SOLVER),
     ``GREEN-GAUSS`` (for GREEN_GAUSS), ``IMPLICIT`` (for EULER_IMPLICIT),
-    ``MARKER_BODY``, ``MACH`` — and a solve that never starts leaves no history,
+    ``MARKER_BODY``, ``MACH`` -- and a solve that never starts leaves no history,
     so the aero coupling could not happen. The identical pipeline driven
     programmatically, from the same canonical values, worked every time. The
     difference was transcription, not physics.
@@ -39,8 +39,8 @@ def configure_from_cpacs(
     ``overrides`` carries the caller's pinned flight state and numerics (e.g.
     cruise freestream and solver settings from an experiment's canonical
     baseline) and is applied LAST, so it wins. The split is deliberate:
-      * CPACS owns the geometry references — they must track the morphed design.
-      * The caller owns flight state and numerics — the adapter's built-in
+      * CPACS owns the geometry references -- they must track the morphed design.
+      * The caller owns flight state and numerics -- the adapter's built-in
         defaults are SEA-LEVEL (101325 Pa / 288.15 K), which is wrong for a
         cruise case, so a caller solving at altitude must override them.
 
@@ -78,7 +78,7 @@ def configure_from_cpacs(
             ref_source_area = "cpacs_declared"
             ref_notes.append(
                 "REF_AREA came from the CPACS <reference><area> element, which morphing "
-                "does NOT update — it may describe the BASELINE wing, not this design. "
+                "does NOT update -- it may describe the BASELINE wing, not this design. "
                 "Pass ref_area from get_wing_summary for a design-tracking value."
             )
         if ref_length is not None:
@@ -98,7 +98,7 @@ def configure_from_cpacs(
             "MESH_FILENAME": mesh_file_name,
             "MESH_FORMAT": "SU2",
             "REF_DIMENSIONALIZATION": "DIMENSIONAL",
-            # From the aircraft definition — the whole point of this tool.
+            # From the aircraft definition -- the whole point of this tool.
             "REF_AREA": derived["ref_area_m2"],
             "REF_LENGTH": derived["ref_length_m"],
             "MACH_NUMBER": derived["mach"],
