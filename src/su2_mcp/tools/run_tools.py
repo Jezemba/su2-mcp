@@ -12,6 +12,57 @@ from su2_mcp.su2_runner import (
 from su2_mcp.tools.session import SESSION_MANAGER, _error
 
 
+_COEFF_ALIASES = {
+    "CL": ("CL", "LIFT"),
+    "CD": ("CD", "DRAG"),
+    "CMz": ("CMZ", "CM", "MOMENT_Z"),
+}
+
+
+def final_coefficients(workdir: object) -> dict[str, float]:
+    """Read the converged force coefficients straight out of the history file.
+
+    ``read_history_csv`` was the ONLY place the framework captured CL/CD, which
+    made coupling depend on the caller choosing that particular tool to read
+    results with. Measured live (sweep 2026-08-12, run 3/16): SU2 solved cleanly
+    in 155 s, the caller reached for ``sample_surface_solution`` instead, hit a
+    dead end, and returned -- so the mission flew aviary's DEFAULT drag even
+    though the coefficients had been computed and written correctly. Run 1/16 of
+    the same sweep coupled purely because the caller happened to pick the other
+    tool.
+
+    A solver that has just computed these values should report them, rather than
+    leaving them to be fetched by exactly one of several plausible follow-ups.
+    Best-effort: never let a reporting problem fail an otherwise good solve.
+    """
+    import csv as _csv
+    from pathlib import Path as _Path
+
+    try:
+        wd = _Path(str(workdir))
+        candidates = sorted(wd.glob("history*.csv"))
+        if not candidates:
+            return {}
+        with candidates[0].open("r", encoding="utf-8", errors="replace") as fh:
+            rows = list(_csv.DictReader(fh))
+        if not rows:
+            return {}
+        # SU2 writes padded, quoted headers -- '       "CD"       '.
+        last = {str(k).strip().strip('"').strip().upper(): v for k, v in rows[-1].items()}
+        out: dict[str, float] = {}
+        for name, aliases in _COEFF_ALIASES.items():
+            for alias in aliases:
+                if alias in last:
+                    try:
+                        out[name] = float(str(last[alias]).strip())
+                    except (TypeError, ValueError):
+                        continue
+                    break
+        return out
+    except Exception:  # pragma: no cover - reporting must never break a solve
+        return {}
+
+
 def _as_int(value: object, default: int = -1) -> int:
     if isinstance(value, (int, float, str)):
         return int(value)
@@ -59,6 +110,16 @@ def run_su2_solver(
             SESSION_MANAGER.record_run(session_id, metadata)
         if isinstance(result, dict):
             result["force_output"] = force_output
+            if result.get("success"):
+                coeffs = final_coefficients(record.workdir)
+                if coeffs:
+                    result["final_coefficients"] = coeffs
+                else:
+                    result["final_coefficients_note"] = (
+                        "The solve succeeded but no CL/CD could be read from the "
+                        "history file. Check that MARKER_MONITORING names a real "
+                        "wall marker and HISTORY_OUTPUT includes AERO_COEFF."
+                    )
             # Surface SU2's own config complaints as structured, actionable
             # items instead of leaving them buried in the log_tail blob. SU2
             # names the offending option AND the correct spelling, so a caller

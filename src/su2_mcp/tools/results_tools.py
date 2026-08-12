@@ -188,7 +188,35 @@ def sample_surface_solution(
         record = SESSION_MANAGER.require(session_id)
         full_path = record.workdir / relative_path
         if not full_path.exists():
-            return _error("Surface solution not found", error_type="not_found")
+            # "Surface solution not found" named the missing file and nothing
+            # else. Measured live (sweep run 3/16, sequential_staged_pipeline):
+            # SU2 had just solved cleanly (exit 0, 155 s), the agent asked for a
+            # surface file that SU2 had not been told to write, got this, retried
+            # the identical call, then gave up and returned final_answer. The
+            # aero coefficients it was after existed the whole time, in
+            # history.csv. That single dead end is why the run flew UNCOUPLED.
+            #
+            # So: say what this session actually produced, and name the tool that
+            # answers the question the caller is really asking.
+            try:
+                produced = sorted(
+                    p.name for p in record.workdir.iterdir() if p.is_file()
+                )
+            except Exception:  # pragma: no cover - never fail while reporting
+                produced = []
+            csvs = [n for n in produced if n.lower().endswith(".csv")]
+            hint = (
+                "For integrated forces (CL, CD) use read_history_csv on the "
+                "history file -- surface files carry per-point field data and are "
+                "only written when OUTPUT_FILES includes SURFACE_CSV."
+            )
+            return _error(
+                f"Surface solution '{relative_path}' not found. "
+                + (f"CSV files in this session: {', '.join(csvs)}. " if csvs else
+                   f"Files in this session: {', '.join(produced) or 'none'}. ")
+                + hint,
+                error_type="not_found",
+            )
 
         # Reject obviously-binary surface formats before opening the file —
         # the message tells the agent where the CSV actually lives.
