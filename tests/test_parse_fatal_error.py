@@ -132,3 +132,79 @@ class TestSurfacedToTheCaller:
         from su2_mcp.tools import run_tools
 
         assert parse_fatal_error(NO_MESH) is not None  # guard the fixture
+
+
+class TestIncompleteConfigNamesTheBuildingTool:
+    """Advice only helps where the caller actually is.
+
+    The "missing required options" guidance lived inside update_config_entries.
+    Sweep run 5/16 (orchestrated_staged_pipeline) called it ZERO times, and
+    configure_from_cpacs zero times, while looping:
+
+        create_su2_session -> set_mesh -> run_su2_solver -> fatal   (x4)
+
+    Each new session starts from the minimal default config, so SU2 failed on a
+    different missing piece each time (marker farfield, marker aircraft,
+    CONV_NUM_METHOD_FLOW) -- ~20 min of wall clock, nothing ever configured.
+    """
+
+    @pytest.mark.parametrize("msg", [
+        "The configuration file doesn't have any definition for marker farfield",
+        "The configuration file doesn't have any definition for marker aircraft",
+        "Config file is missing the CONV_NUM_METHOD_FLOW option.",
+        "SOLVER must be set in the configuration file",
+    ])
+    def test_observed_incomplete_config_errors_get_the_remedy(self, msg):
+        from su2_mcp.tools.run_tools import _incomplete_config_remedy
+        assert "configure_from_cpacs" in _incomplete_config_remedy(msg)
+
+    def test_remedy_says_a_new_session_will_not_help(self):
+        """The loop that actually happened was create-session-and-retry."""
+        from su2_mcp.tools.run_tools import _incomplete_config_remedy
+        out = _incomplete_config_remedy("Config file is missing the CONV_NUM_METHOD_FLOW option.")
+        assert "new session starts from the same" in out
+
+    @pytest.mark.parametrize("msg", [
+        "The SU2 mesh file named mesh.su2 was not found.",
+        "The marker wing was not found in the mesh file.",
+    ])
+    def test_unrelated_failures_get_no_config_advice(self, msg):
+        """A missing mesh is not fixed by configuring the solver."""
+        from su2_mcp.tools.run_tools import _incomplete_config_remedy
+        assert _incomplete_config_remedy(msg) == ""
+
+    def test_it_reaches_the_caller_through_run_su2_solver(self, monkeypatch):
+        from su2_mcp.tools import run_tools
+
+        LOG = (
+            'Error in "void CConfig::SetMarkers(unsigned short)":\n'
+            "-------------------------------------------------------------\n"
+            "The configuration file doesn't have any definition for marker farfield\n"
+            "------------------------------ Error Exit -------------------------------\n"
+        )
+
+        class _Rec:
+            workdir = "/tmp"
+            config_path = "/tmp/config.cfg"
+
+        class _Mgr:
+            def require(self, sid):
+                return _Rec()
+
+            def record_run(self, *a, **k):
+                pass
+
+        class _Runner:
+            def __init__(self, *a, **k):
+                pass
+
+            def run(self, *a, **k):
+                return {"success": False, "exit_code": 1, "log_tail": LOG}
+
+        monkeypatch.setattr(run_tools, "SESSION_MANAGER", _Mgr())
+        monkeypatch.setattr(run_tools, "SU2Runner", _Runner)
+        monkeypatch.setattr(run_tools, "ensure_force_output", lambda *a, **k: {})
+
+        out = run_tools.run_su2_solver("s")
+        assert "marker farfield" in out["solver_error"]
+        assert "configure_from_cpacs" in out["hint"]

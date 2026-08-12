@@ -63,6 +63,46 @@ def final_coefficients(workdir: object) -> dict[str, float]:
         return {}
 
 
+_INCOMPLETE_CONFIG_RE = __import__("re").compile(
+    r"missing the (\w+) option|doesn't have any definition for marker|"
+    r"must be set in the configuration file",
+    __import__("re").I,
+)
+
+
+def _incomplete_config_remedy(message: str) -> str:
+    """Name the tool that BUILDS a config, at the point the config fails.
+
+    The "missing required options" advice lived inside update_config_entries --
+    which an agent that never calls it never sees. Measured live (sweep run
+    5/16, orchestrated_staged_pipeline): the aero agent looped
+
+        create_su2_session -> set_mesh -> run_su2_solver -> fatal
+        create_su2_session -> set_mesh -> run_su2_solver -> fatal
+        create_su2_session -> set_mesh -> run_su2_solver -> fatal
+
+    with ZERO calls to update_config_entries or configure_from_cpacs across the
+    whole run. Each fresh session starts from the minimal default config, so SU2
+    failed on a different missing piece each time -- no definition for marker
+    farfield, then marker aircraft, then CONV_NUM_METHOD_FLOW -- 4 solver
+    invocations and ~20 min of wall clock without ever configuring anything.
+
+    Guidance only helps where the caller actually is, so it belongs on the
+    response to the call being made.
+    """
+    if not _INCOMPLETE_CONFIG_RE.search(str(message)):
+        return ""
+    return (
+        " This session's config is incomplete, which is what a newly created "
+        "session looks like before it is configured: call "
+        "configure_from_cpacs(session_id, cpacs_file_path) to build a valid "
+        "config -- solver, flight state, numerics and the markers -- from the "
+        "aircraft definition in one step. Creating another session and re-running "
+        "reproduces this exact error, because a new session starts from the same "
+        "minimal config."
+    )
+
+
 def _as_int(value: object, default: int = -1) -> int:
     if isinstance(value, (int, float, str)):
         return int(value)
@@ -145,6 +185,7 @@ def run_su2_solver(
                         f"SU2 exited without solving: {fatal['message']} There is no "
                         "history and no CL/CD. Resolve that condition before re-running; "
                         "re-issuing the same call unchanged will fail identically."
+                        + _incomplete_config_remedy(fatal["message"])
                     )
         return result
     except KeyError as exc:
