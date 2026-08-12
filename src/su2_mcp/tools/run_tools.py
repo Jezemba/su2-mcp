@@ -167,12 +167,37 @@ def run_su2_solver(
             cfg_errors = parse_config_errors(str(result.get("log_tail", "")))
             if cfg_errors:
                 result["config_errors"] = cfg_errors
-                result["hint"] = (
-                    "SU2 rejected the configuration and did NOT solve, so there is "
-                    "no history and no CL/CD. Fix the options listed in "
-                    "config_errors (use the did_you_mean spellings) via "
-                    "update_config_entries, then re-run."
-                )
+                # Two hint paths exist and BOTH must give the same advice. This
+                # one is the branch an unconfigured session actually reaches
+                # (verified live: a fresh create_su2_session + run_su2_solver
+                # lands here, not in the fatal branch below), and it used to end
+                # "...via update_config_entries, then re-run" -- sending the
+                # caller to patch options one at a time into a config that does
+                # not exist yet. `missing` errors mean absent options, which is
+                # a config to BUILD, not to repair; `invalid option` errors are
+                # genuine per-option corrections.
+                absent = [
+                    e for e in cfg_errors
+                    if "missing" in str(e.get("problem", "")).lower()
+                ]
+                if absent and len(absent) == len(cfg_errors):
+                    result["hint"] = (
+                        "SU2 rejected the configuration and did NOT solve, so there is "
+                        "no history and no CL/CD. The options in config_errors are "
+                        "ABSENT rather than misspelt, which is what an unconfigured "
+                        "session looks like: call configure_from_cpacs(session_id, "
+                        "cpacs_file_path) to build a complete, valid config from the "
+                        "aircraft definition in one step, then re-run."
+                    )
+                else:
+                    result["hint"] = (
+                        "SU2 rejected the configuration and did NOT solve, so there is "
+                        "no history and no CL/CD. Fix the options listed in "
+                        "config_errors (use the did_you_mean spellings) via "
+                        "update_config_entries, then re-run. If most of the config is "
+                        "absent rather than misspelt, configure_from_cpacs rebuilds it "
+                        "correctly in one call."
+                    )
             elif not result.get("success"):
                 # Any OTHER fatal exit. SU2 words these well but prints them
                 # mid-banner, so promote its own text rather than leaving the
