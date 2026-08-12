@@ -117,6 +117,52 @@ class TestBothEntryPointsAreGuarded:
         assert "error" in out
         assert not (tmp_path / "mesh.su2").exists(), "junk must not be written"
 
+    def test_message_does_not_misdescribe_its_own_cause(self):
+        """`'exported'` IS valid base64 -- it just is not a mesh. Reporting it as
+        "not decodable base64" while quoting a decoded byte count contradicts
+        itself, and that is the defect class this whole pass removes. Live text
+        before the fix:
+
+            mesh_base64 is not decodable base64 (mesh_base64 decoded to 6 bytes
+            that are not an SU2 mesh: ...)
+
+        The earlier test here missed it by mocking the session manager with
+        `validate=True`, which raises binascii.Error and never reaches the
+        decode_mesh branch.
+        """
+        from su2_mcp.session_manager import SessionManager
+        from su2_mcp.tools import config_tools
+
+        mgr = SessionManager()
+        sid = mgr.create_session().session_id
+        prev = config_tools.SESSION_MANAGER
+        config_tools.SESSION_MANAGER = mgr
+        try:
+            msg = config_tools.set_mesh(sid, "exported")["error"]["message"]
+        finally:
+            config_tools.SESSION_MANAGER = prev
+
+        assert "not an SU2 mesh" in msg
+        for contradiction in ("not valid base64", "not decodable base64",
+                              "Invalid base64-encoded", "Incorrect padding"):
+            assert contradiction not in msg, f"message contradicts itself: {msg}"
+
+    def test_genuinely_bad_base64_still_says_base64(self):
+        """The other branch must keep its own, correct wording."""
+        from su2_mcp.session_manager import SessionManager
+        from su2_mcp.tools import config_tools
+
+        mgr = SessionManager()
+        sid = mgr.create_session().session_id
+        prev = config_tools.SESSION_MANAGER
+        config_tools.SESSION_MANAGER = mgr
+        try:
+            msg = config_tools.set_mesh(sid, "<MESH_BASE64_HERE>")["error"]["message"]
+        finally:
+            config_tools.SESSION_MANAGER = prev
+
+        assert "not valid base64" in msg
+
     def test_create_session_rejects_junk_initial_mesh(self):
         from su2_mcp.session_manager import SessionManager
 

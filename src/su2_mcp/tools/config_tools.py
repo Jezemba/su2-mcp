@@ -237,15 +237,27 @@ def set_mesh(
         return {"mesh_path": str(mesh_path)}
     except KeyError as exc:
         return _error(str(exc), error_type="not_found")
-    except (binascii.Error, ValueError) as exc:
-        # `mesh_base64` did not decode. The bare re-wrap here used to report
-        # base64's own words -- "Incorrect padding", "Invalid base64-encoded
-        # string" -- which describe the SYMPTOM of passing a placeholder or a
-        # stray token as mesh DATA and name neither the argument at fault nor
-        # anything to do next. Callers answered it by reissuing the identical
+    except ValueError as exc:
+        # Two DIFFERENT failures land here and must not be conflated:
+        #
+        #   binascii.Error  -- the string is not base64 at all
+        #   ValueError      -- it decoded fine but is not a mesh (decode_mesh),
+        #                      which already explains itself precisely
+        #
+        # Wrapping both in "is not decodable base64" produced the self-
+        # contradictory "mesh_base64 is not decodable base64 (mesh_base64
+        # decoded to 6 bytes that are not an SU2 mesh...)" -- an error message
+        # that misdescribes its own cause, which is the defect class this whole
+        # pass exists to remove. decode_mesh's message passes through untouched.
+        if not isinstance(exc, binascii.Error):
+            return _error(str(exc), error_type="invalid_payload")
+        # Base64's own words -- "Incorrect padding", "Invalid base64-encoded
+        # string" -- describe the SYMPTOM of passing a placeholder or a stray
+        # token as mesh DATA, and name neither the argument at fault nor
+        # anything to do next. Callers answered that by reissuing the identical
         # call (measured: 25 occurrences across 13 runs).
         return _error(
-            f"mesh_base64 is not decodable base64 ({exc}). It must carry the mesh "
+            f"mesh_base64 is not valid base64 ({exc}). It must carry the mesh "
             "FILE CONTENTS, base64-encoded -- not a file name, path, or stand-in "
             f"token (received {len(mesh_base64)} characters). Obtain the contents "
             "from the meshing step that produced this mesh, then pass them here.",
