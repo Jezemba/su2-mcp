@@ -2,10 +2,112 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from su2_mcp import config_utils
 from su2_mcp.tools.session import SESSION_MANAGER, _error
+
+
+def configure_from_cpacs(
+    session_id: str,
+    cpacs_file_path: str,
+    overrides: dict[str, Any] | None = None,
+    mesh_file_name: str = "mesh.su2",
+) -> dict[str, object]:
+    """Build this session's SU2 config FROM the CPACS file, not by hand.
+
+    Reference quantities are the aircraft's, so they must come from the aircraft
+    definition rather than being retyped. This reads ``REF_AREA`` and
+    ``REF_LENGTH`` straight out of the CPACS geometry and writes a complete,
+    valid Euler config around them — including ``MARKER_MONITORING`` and force
+    fields in ``HISTORY_OUTPUT``, without which SU2 solves happily and writes no
+    CL/CD at all.
+
+    Why this exists: agents were composing the whole config by hand from a dict
+    embedded in their prompt, and drifting. Across two MAS-Aviary sweeps SU2
+    rejected 80-91% of configs — ``PHYSICAL_PROBLEM`` (the v6 name for SOLVER),
+    ``GREEN-GAUSS`` (for GREEN_GAUSS), ``IMPLICIT`` (for EULER_IMPLICIT),
+    ``MARKER_BODY``, ``MACH`` — and a solve that never starts leaves no history,
+    so the aero coupling could not happen. The identical pipeline driven
+    programmatically, from the same canonical values, worked every time. The
+    difference was transcription, not physics.
+
+    ``overrides`` carries the caller's pinned flight state and numerics (e.g.
+    cruise freestream and solver settings from an experiment's canonical
+    baseline) and is applied LAST, so it wins. The split is deliberate:
+      * CPACS owns the geometry references — they must track the morphed design.
+      * The caller owns flight state and numerics — the adapter's built-in
+        defaults are SEA-LEVEL (101325 Pa / 288.15 K), which is wrong for a
+        cruise case, so a caller solving at altitude must override them.
+
+    Returns the resulting entries plus which references came from CPACS, so the
+    caller can verify the geometry actually reached the solver.
+    """
+    try:
+        record = SESSION_MANAGER.require(session_id)
+
+        path = Path(cpacs_file_path)
+        if not path.is_file():
+            return _error(
+                f"CPACS file not found: {cpacs_file_path}",
+                error_type="not_found",
+            )
+
+        from su2_mcp.cpacs_adapter import read_from_cpacs
+
+        derived = read_from_cpacs(path.read_text(encoding="utf-8"))
+
+        # Base config: valid SU2 8.3 Euler setup with force output guaranteed.
+        entries: dict[str, Any] = {
+            "SOLVER": "EULER",
+            "MATH_PROBLEM": "DIRECT",
+            "MESH_FILENAME": mesh_file_name,
+            "MESH_FORMAT": "SU2",
+            "REF_DIMENSIONALIZATION": "DIMENSIONAL",
+            # From the aircraft definition — the whole point of this tool.
+            "REF_AREA": derived["ref_area_m2"],
+            "REF_LENGTH": derived["ref_length_m"],
+            "MACH_NUMBER": derived["mach"],
+            "AOA": derived["aoa_deg"],
+            # Force output. Without MARKER_MONITORING SU2 integrates no forces,
+            # so history.csv carries residuals only and there is no CL/CD.
+            "MARKER_MONITORING": "( aircraft )",
+            "MARKER_PLOTTING": "( aircraft )",
+            "MARKER_EULER": "( aircraft )",
+            "MARKER_FAR": "( farfield )",
+            "HISTORY_OUTPUT": "( ITER, RMS_RES, AERO_COEFF )",
+            "CONV_FILENAME": "history",
+            "OUTPUT_FILES": "( RESTART, PARAVIEW )",
+        }
+
+        # Caller's pinned flight state / numerics win.
+        if overrides:
+            corrected, remapped = config_utils.remap_deprecated_keys(overrides)
+            entries.update(corrected)
+        else:
+            remapped = []
+
+        config_utils.update_config_entries(
+            record.config_path, entries, create_if_missing=True
+        )
+
+        result: dict[str, object] = {
+            "config_path": str(record.config_path),
+            "from_cpacs": {
+                "REF_AREA": derived["ref_area_m2"],
+                "REF_LENGTH": derived["ref_length_m"],
+            },
+            "keys_written": sorted(entries),
+            "overrides_applied": sorted(overrides) if overrides else [],
+        }
+        if remapped:
+            result["deprecated_remapped"] = remapped
+        return result
+    except KeyError as exc:
+        return _error(str(exc), error_type="not_found")
+    except Exception as exc:  # pragma: no cover
+        return _error("Failed to configure from CPACS", details=str(exc))
 
 
 def get_config_text(session_id: str) -> dict[str, object]:

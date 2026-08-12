@@ -1,6 +1,7 @@
 """Tool bundle exports."""
 
 from su2_mcp.tools.config_tools import (
+    configure_from_cpacs,
     get_config_text,
     get_valid_config_options,
     parse_config,
@@ -25,6 +26,7 @@ from su2_mcp.tools.session import (
 from su2_mcp.tools.su2_installation import get_su2_status
 
 __all__ = [
+    "configure_from_cpacs",
     "SESSION_MANAGER",
     "close_su2_session",
     "create_su2_session",
