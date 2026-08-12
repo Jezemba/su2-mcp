@@ -172,3 +172,40 @@ class TestNoneOfTheObservedMistakesSurvive:
         assert str(e["SOLVER"]) == "EULER"
         assert str(e["NUM_METHOD_GRAD"]) == "WEIGHTED_LEAST_SQUARES"
         assert str(e["TIME_DISCRE_FLOW"]) == "EULER_IMPLICIT"
+
+
+class TestMissingRequiredPointsAtTheRightTool:
+    """The diagnosis was always correct; the REMEDY sent the caller back into
+    the loop that caused the problem -- "Call update_config_entries again to set
+    them", i.e. keep building a valid SU2 config key-by-key from memory. That is
+    how 80-91% of configs came to be rejected (B22).
+
+    Observed live 2026-08-12 (sweep run 5/16, orchestrated_staged_pipeline):
+    a config with no markers at all reached the solver --
+
+        solver_error: "The configuration file doesn't have any definition for
+                       marker farfield"
+        force_output: MARKER_MONITORING missing, no wall marker to derive it
+                      from -- this run CANNOT produce force coefficients
+
+    -- so the run produced no CL/CD and flew uncoupled.
+    """
+
+    def test_missing_markers_recommend_configure_from_cpacs(self, session):
+        out = config_tools.update_config_entries(session["sid"], {"ITER": 100})
+        assert "configure_from_cpacs" in out["missing_note"]
+        assert "MARKER_EULER" in out["missing_required"]
+
+    def test_remedy_names_the_consequence_of_missing_markers(self, session):
+        note = config_tools.update_config_entries(session["sid"], {"ITER": 100})["missing_note"]
+        assert "no forces" in note and "no CL/CD" in note
+
+    def test_a_single_stray_key_still_gets_the_simple_advice(self, session):
+        """Not every gap means rebuild -- only a from-scratch config does."""
+        config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"], overrides=CANONICAL
+        )
+        out = config_tools.update_config_entries(session["sid"], {"ITER": 50})
+        assert "missing_required" not in out or "configure_from_cpacs" not in out.get(
+            "missing_note", ""
+        )

@@ -208,9 +208,34 @@ def update_config_entries(
         missing = _REQUIRED_EULER - current_keys
         if missing:
             result["missing_required"] = sorted(missing)
+            # The diagnosis here was always right; the REMEDY sent the caller
+            # back into the loop that caused the problem. "Call
+            # update_config_entries again to set them" invites building a valid
+            # SU2 config key-by-key from memory -- which is precisely how 80-91%
+            # of configs came to be rejected (B22), and how the run below ended
+            # up with no markers at all:
+            #
+            #   solver_error: "The configuration file doesn't have any
+            #                  definition for marker farfield"
+            #   force_output: MARKER_MONITORING missing, no wall marker to
+            #                 derive it from -- CANNOT produce force coefficients
+            #
+            # configure_from_cpacs writes every one of these from the aircraft
+            # definition in one call. Naming the tool that solves the problem
+            # beats naming the tool that reports it.
+            markers = {m for m in missing if m.startswith("MARKER_")}
+            rebuild = markers or len(missing) >= 4
+            remedy = (
+                "Prefer configure_from_cpacs(session_id, cpacs_file_path): it derives "
+                "these from the aircraft definition -- including the markers, without "
+                "which SU2 integrates no forces and there is no CL/CD -- instead of "
+                "setting them one at a time from memory."
+                if rebuild
+                else "Call update_config_entries again to set them."
+            )
             result["missing_note"] = (
                 f"SU2 will fail without these options: {', '.join(sorted(missing))}. "
-                "Call update_config_entries again to set them."
+                + remedy
             )
 
         return result
