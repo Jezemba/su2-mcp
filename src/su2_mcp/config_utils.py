@@ -20,6 +20,21 @@ DEPRECATED_OPTIONS: dict[str, str] = {
     "SCREEN_WRT_FREQ": "OUTPUT_WRT_FREQ",
     "STARTCONV_ITER": "CONV_STARTITER",
     "EXT_ITER": "ITER",
+    # Freestream Mach. MACH is the single most dangerous entry in this map:
+    # SU2's own `did_you_mean` answers "MACH_MOTION" by string similarity, and
+    # MACH_MOTION is a VALID option (moving-mesh Mach) that SU2 accepts without
+    # complaint -- so following the suggestion turns a loud rejection into a
+    # silently wrong cruise point. Observed live 2026-08-12: a caller wrote
+    # MACH, was steered to MACH_MOTION, then guessed FREESTREAM_MACH, six
+    # config rejections and no solve. Same trap as PHYSICAL_PROBLEM drawing
+    # "MATH_PROBLEM"; remapping here promotes the correct option ahead of SU2's
+    # spelling match.
+    "MACH": "MACH_NUMBER",
+    "FREESTREAM_MACH": "MACH_NUMBER",
+    "MACH_INF": "MACH_NUMBER",
+    "NUM_METHOD": "NUM_METHOD_GRAD",
+    "AOA_DEG": "AOA",
+    "ANGLE_OF_ATTACK": "AOA",
 }
 
 

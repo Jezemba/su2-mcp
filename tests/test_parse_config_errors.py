@@ -130,12 +130,31 @@ class TestSU2SuggestionIsOverriddenWhenWrong:
         assert "deprecated name for SOLVER" in e["note"]
         assert "spelling match" in e["note"]
 
-    def test_non_deprecated_option_keeps_su2s_suggestion_untouched(self):
-        """MACH -> MACH_NUMBER is a genuine SU2 suggestion; do not interfere."""
+    def test_mach_is_promoted_over_su2s_dangerous_suggestion(self):
+        """This test used to assert the opposite, on the assumption that SU2
+        suggests MACH_NUMBER for MACH and should be left alone. Live output
+        2026-08-12 disproved it:
+
+            {"option": "MACH", "did_you_mean": ["MACH_MOTION"]}
+
+        MACH_MOTION is the MOVING-MESH Mach number and is a VALID option, so SU2
+        accepts it silently -- following the suggestion turns a loud rejection
+        into a quietly wrong cruise point. Exactly the PHYSICAL_PROBLEM ->
+        MATH_PROBLEM trap, which is why MACH now sits in DEPRECATED_OPTIONS and
+        the correct option is promoted ahead of the spelling match.
+        """
         e = parse_config_errors(
-            "Line 4 MACH: invalid option name.\nDid you mean MACH_NUMBER?"
+            "Line 4 MACH: invalid option name.\nDid you mean MACH_MOTION?"
         )[0]
-        assert e["did_you_mean"] == ["MACH_NUMBER"]
+        assert e["did_you_mean"][0] == "MACH_NUMBER"
+        assert "note" in e
+
+    def test_a_genuinely_unknown_option_keeps_su2s_suggestion(self):
+        """Promotion must only apply where we KNOW the right answer."""
+        e = parse_config_errors(
+            "Line 4 WOBBLE_FACTOR: invalid option name.\nDid you mean WOBBLE?"
+        )[0]
+        assert e["did_you_mean"] == ["WOBBLE"]
         assert "note" not in e
 
 
