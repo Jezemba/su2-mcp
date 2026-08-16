@@ -115,8 +115,13 @@ def configure_from_cpacs(
         }
 
         # Caller's pinned flight state / numerics win.
+        dropped: list[str] = []
         if overrides:
             corrected, remapped = config_utils.remap_deprecated_keys(overrides)
+            # A single unusable key rejects the ENTIRE config, so a solve dies
+            # even when every pinned value is right (observed: TURB_MODEL, four
+            # times in one run).
+            corrected, dropped = config_utils.drop_known_invalid(corrected)
             entries.update(corrected)
         else:
             remapped = []
@@ -140,6 +145,13 @@ def configure_from_cpacs(
             result["reference_warnings"] = ref_notes
         if remapped:
             result["deprecated_remapped"] = remapped
+        if dropped:
+            result["dropped_invalid"] = dropped
+            result["dropped_note"] = (
+                f"Dropped {', '.join(dropped)} -- SU2 rejects these names and one "
+                "of them makes it refuse the whole config. The canonical settings "
+                "are unaffected."
+            )
         return result
     except KeyError as exc:
         return _error(str(exc), error_type="not_found")
@@ -184,10 +196,17 @@ def update_config_entries(
     try:
         record = SESSION_MANAGER.require(session_id)
         corrected, warnings = config_utils.remap_deprecated_keys(updates)
+        corrected, dropped_invalid = config_utils.drop_known_invalid(corrected)
         updated = config_utils.update_config_entries(
             record.config_path, corrected, create_if_missing=create_if_missing
         )
         result: dict[str, object] = {"updated_keys": updated}
+        if dropped_invalid:
+            result["dropped_invalid"] = dropped_invalid
+            result["dropped_note"] = (
+                f"Dropped {', '.join(dropped_invalid)} -- SU2 rejects these names, "
+                "and one bad key makes it refuse the entire config."
+            )
         if warnings:
             result["deprecated_remapped"] = warnings
             result["note"] = (

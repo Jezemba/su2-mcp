@@ -38,6 +38,45 @@ DEPRECATED_OPTIONS: dict[str, str] = {
 }
 
 
+# Options SU2 has been OBSERVED to reject, beyond the deprecated names above.
+# Kept separate from DEPRECATED_OPTIONS because these have no correct
+# equivalent to remap to -- they are simply wrong, and forwarding one rejects
+# the ENTIRE config, so a single bad key kills a solve whose every pinned value
+# is correct (observed 2026-08-12: TURB_MODEL blocked a run four times).
+#
+# NOT validated against `get_valid_config_options`: that is a curated discovery
+# list of ~39 common options, and seven CANONICAL settings are absent from it
+# (KIND_TURB_MODEL, MGCYCLE, JST_SENSOR_COEFF, REYNOLDS_NUMBER,
+# CFL_ADAPT_PARAM, REF_DIMENSIONALIZATION, RESTART_SOL). Using it as a validator
+# would silently strip pinned numerics from every config -- worse than the bug.
+# So this drops only what SU2 itself has rejected.
+KNOWN_INVALID_OPTIONS: frozenset[str] = frozenset({
+    "TURB_MODEL",        # correct name is KIND_TURB_MODEL
+    "NUM_METHOD",        # correct name is NUM_METHOD_GRAD
+    "PHYSICAL_PROBLEM",  # v6 name for SOLVER (also in DEPRECATED_OPTIONS)
+    "MACH",              # correct name is MACH_NUMBER
+    "FREESTREAM_MACH",
+    "MACH_INF",
+})
+
+
+def drop_known_invalid(
+    updates: MutableMapping[str, object],
+) -> tuple[dict[str, object], list[str]]:
+    """Remove options SU2 is known to reject. Returns (kept, dropped_names).
+
+    Run AFTER remap_deprecated_keys, so anything with a correct equivalent has
+    already been renamed and only genuinely unusable keys remain.
+    """
+    kept, dropped = {}, []
+    for key, value in updates.items():
+        if str(key).upper() in KNOWN_INVALID_OPTIONS:
+            dropped.append(str(key))
+        else:
+            kept[key] = value
+    return kept, dropped
+
+
 def remap_deprecated_keys(
     updates: MutableMapping[str, object],
 ) -> tuple[dict[str, object], list[dict[str, str]]]:

@@ -209,3 +209,57 @@ class TestMissingRequiredPointsAtTheRightTool:
         assert "missing_required" not in out or "configure_from_cpacs" not in out.get(
             "missing_note", ""
         )
+
+
+class TestKnownInvalidOptionsAreDropped:
+    """One unusable key makes SU2 refuse the ENTIRE config, so a solve dies even
+    when every pinned value is correct. Observed 2026-08-12: `TURB_MODEL`
+    (correct name `KIND_TURB_MODEL`) blocked a run four times.
+
+    Deliberately NOT validated against `get_valid_config_options`: that is a
+    curated discovery list of ~39 common options, and SEVEN canonical settings
+    are absent from it -- KIND_TURB_MODEL, MGCYCLE, JST_SENSOR_COEFF,
+    REYNOLDS_NUMBER, CFL_ADAPT_PARAM, REF_DIMENSIONALIZATION, RESTART_SOL. Using
+    it as a validator would silently strip pinned numerics from every config,
+    which is worse than the bug being fixed. So only names SU2 has actually been
+    seen to reject are dropped.
+    """
+
+    def test_turb_model_is_dropped(self, session):
+        out = config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"], overrides={"TURB_MODEL": "SA", "ITER": 50}
+        )
+        assert "TURB_MODEL" in out["dropped_invalid"]
+        assert "TURB_MODEL" not in _entries(session)
+
+    def test_valid_overrides_survive(self, session):
+        config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"], overrides={"TURB_MODEL": "SA", "ITER": 50}
+        )
+        assert int(_entries(session)["ITER"]) == 50
+
+    def test_canonical_options_absent_from_the_discovery_list_survive(self, session):
+        """The seven that would have been destroyed by list-based validation."""
+        canon = {
+            "KIND_TURB_MODEL": "SA", "MGCYCLE": "V_CYCLE", "JST_SENSOR_COEFF": "( 0.5, 0.02 )",
+            "REYNOLDS_NUMBER": 5000000.0, "CFL_ADAPT_PARAM": "( 0.1, 2.0, 10.0, 1e10 )",
+            "REF_DIMENSIONALIZATION": "DIMENSIONAL", "RESTART_SOL": "NO",
+        }
+        config_tools.configure_from_cpacs(session["sid"], session["cpacs"], overrides=canon)
+        e = _entries(session)
+        for key in canon:
+            assert key in e, f"{key} was stripped -- canonical numerics must survive"
+
+    def test_remap_runs_before_drop(self, session):
+        """MACH has a correct equivalent, so it is renamed, not discarded."""
+        out = config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"], overrides={"MACH": 0.78}
+        )
+        assert float(_entries(session)["MACH_NUMBER"]) == pytest.approx(0.78)
+        assert "MACH" not in out.get("dropped_invalid", [])
+
+    def test_nothing_dropped_means_no_noise(self, session):
+        out = config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"], overrides={"ITER": 10}
+        )
+        assert "dropped_invalid" not in out
