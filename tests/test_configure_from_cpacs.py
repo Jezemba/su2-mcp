@@ -225,12 +225,22 @@ class TestKnownInvalidOptionsAreDropped:
     seen to reject are dropped.
     """
 
-    def test_turb_model_is_dropped(self, session):
-        out = config_tools.configure_from_cpacs(
-            session["sid"], session["cpacs"], overrides={"TURB_MODEL": "SA", "ITER": 50}
+    def test_turb_model_is_renamed_not_discarded(self, session):
+        """Live verification 2026-08-15 changed this test.
+
+        TURB_MODEL was first DROPPED. The written config still ended up with
+        `KIND_TURB_MODEL= SA` -- but only because the canonical baseline happens
+        to pin SA. A caller asking for SA against a canonical SST would have had
+        its choice silently discarded, which is the MACH -> MACH_MOTION trap with
+        a different spelling. Renaming preserves the caller's VALUE, so
+        TURB_MODEL now lives in DEPRECATED_OPTIONS.
+        """
+        config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"], overrides={"TURB_MODEL": "SST", "ITER": 50}
         )
-        assert "TURB_MODEL" in out["dropped_invalid"]
-        assert "TURB_MODEL" not in _entries(session)
+        e = _entries(session)
+        assert "TURB_MODEL" not in e          # the name SU2 rejects never reaches it
+        assert e["KIND_TURB_MODEL"] == "SST"  # ...and the caller's value survives
 
     def test_valid_overrides_survive(self, session):
         config_tools.configure_from_cpacs(

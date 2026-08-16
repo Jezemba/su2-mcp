@@ -33,31 +33,42 @@ DEPRECATED_OPTIONS: dict[str, str] = {
     "FREESTREAM_MACH": "MACH_NUMBER",
     "MACH_INF": "MACH_NUMBER",
     "NUM_METHOD": "NUM_METHOD_GRAD",
+    # Not an SU2 option at any version -- callers invent it. Its values ("SA",
+    # "SST") are exactly KIND_TURB_MODEL's domain, so renaming preserves the
+    # caller's intent. It was briefly in KNOWN_INVALID_OPTIONS instead, and live
+    # verification showed why that was wrong: the request survived only because
+    # the canonical baseline happened to pin the same value, so a caller asking
+    # for SA against a canonical SST would have had its choice silently
+    # discarded -- the MACH -> MACH_MOTION trap with a different spelling.
+    "TURB_MODEL": "KIND_TURB_MODEL",
     "AOA_DEG": "AOA",
     "ANGLE_OF_ATTACK": "AOA",
 }
 
 
-# Options SU2 has been OBSERVED to reject, beyond the deprecated names above.
-# Kept separate from DEPRECATED_OPTIONS because these have no correct
-# equivalent to remap to -- they are simply wrong, and forwarding one rejects
-# the ENTIRE config, so a single bad key kills a solve whose every pinned value
-# is correct (observed 2026-08-12: TURB_MODEL blocked a run four times).
+# Options SU2 rejects that have NO correct equivalent to rename them to. One
+# such name rejects the ENTIRE config, so a single bad key kills a solve whose
+# every pinned value is correct (observed 2026-08-12: a bad turbulence-model key
+# blocked a run four times).
 #
 # NOT validated against `get_valid_config_options`: that is a curated discovery
 # list of ~39 common options, and seven CANONICAL settings are absent from it
 # (KIND_TURB_MODEL, MGCYCLE, JST_SENSOR_COEFF, REYNOLDS_NUMBER,
 # CFL_ADAPT_PARAM, REF_DIMENSIONALIZATION, RESTART_SOL). Using it as a validator
 # would silently strip pinned numerics from every config -- worse than the bug.
-# So this drops only what SU2 itself has rejected.
-KNOWN_INVALID_OPTIONS: frozenset[str] = frozenset({
-    "TURB_MODEL",        # correct name is KIND_TURB_MODEL
-    "NUM_METHOD",        # correct name is NUM_METHOD_GRAD
-    "PHYSICAL_PROBLEM",  # v6 name for SOLVER (also in DEPRECATED_OPTIONS)
-    "MACH",              # correct name is MACH_NUMBER
-    "FREESTREAM_MACH",
-    "MACH_INF",
-})
+#
+# CURRENTLY EMPTY, deliberately. Every wrong name observed so far has a correct
+# equivalent and therefore belongs in DEPRECATED_OPTIONS above, where the
+# caller's VALUE is preserved instead of discarded. This set is the net for the
+# other case -- a name SU2 rejects with nothing to rename it to -- so adding one
+# is a one-line change rather than a lost run.
+#
+# Known limitation: an invented name nobody has seen yet (WOBBLE_FACTOR) still
+# reaches SU2 and still rejects the whole config. It cannot be enumerated in
+# advance, and the alternative (allow-listing) is unsafe here -- see above.
+# `parse_config_errors` is what covers that case: SU2 names the bad option and
+# its line, and that reaches the caller as a structured, actionable error.
+KNOWN_INVALID_OPTIONS: frozenset[str] = frozenset()
 
 
 def drop_known_invalid(
