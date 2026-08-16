@@ -71,6 +71,56 @@ DEPRECATED_OPTIONS: dict[str, str] = {
 KNOWN_INVALID_OPTIONS: frozenset[str] = frozenset()
 
 
+# A dotted key is never an SU2 option. SU2 names are flat identifiers
+# (MACH_NUMBER, KIND_TURB_MODEL); aviary/tigl parameters are dotted
+# (Aircraft.Wing.TAPER_RATIO, Mission.Design.RANGE). Measured 2026-08-16: an
+# agent wrote Aircraft.Wing.ASPECT_RATIO and Aircraft.Wing.TAPER_RATIO into the
+# SU2 config, and since ONE bad name rejects the entire config, every solve died
+# at parse time in ~1.3 s -- 43 rejections in one run, no aero, uncoupled mission.
+#
+# Structural rather than a name list, deliberately: the B41 amendment recorded
+# that unknown invented names cannot be enumerated in advance. This rejects the
+# whole class of cross-server leaks in one rule.
+_FOREIGN_PARAM_HINT = {
+    "AIRCRAFT": "aviary (set_aircraft_parameters) or tigl (set_high_level_parameters)",
+    "MISSION": "aviary (configure_mission)",
+}
+
+
+def split_foreign_params(
+    updates: MutableMapping[str, object],
+) -> tuple[dict[str, object], list[dict[str, str]]]:
+    """Separate keys that belong to ANOTHER server. Returns (kept, rejected).
+
+    Each rejected entry names where the parameter actually belongs, so the caller
+    can act in one step instead of re-guessing an SU2 spelling that cannot exist.
+    """
+    kept: dict[str, object] = {}
+    rejected: list[dict[str, str]] = []
+    for key, value in updates.items():
+        name = str(key)
+        if "." not in name:
+            kept[key] = value
+            continue
+        owner = _FOREIGN_PARAM_HINT.get(name.split(".", 1)[0].upper())
+        rejected.append({
+            "option": name,
+            "reason": "not an SU2 config option -- SU2 option names never contain a dot",
+            "belongs_to": owner or "another MCP server, not SU2",
+            "note": (
+                f"'{name}' is an aircraft/mission design parameter. Set it via "
+                f"{owner or 'the owning server'}. Do NOT pass it to SU2: one "
+                "unrecognised name makes SU2 reject the ENTIRE config, so the "
+                "solve dies even when every other value is correct. Ignore any "
+                "'Did you mean ...' suggestion for it -- SU2 matches by spelling "
+                "and can point at a VALID but unrelated option (e.g. "
+                "AIRFOIL_MASS_RATIO), which would be accepted silently and give "
+                "a wrong solve instead of a loud error."
+            ),
+        })
+    return kept, rejected
+
+
 def drop_known_invalid(
     updates: MutableMapping[str, object],
 ) -> tuple[dict[str, object], list[str]]:

@@ -116,8 +116,16 @@ def configure_from_cpacs(
 
         # Caller's pinned flight state / numerics win.
         dropped: list[str] = []
+        foreign: list[dict[str, str]] = []
         if overrides:
-            corrected, remapped = config_utils.remap_deprecated_keys(overrides)
+            # Cross-server leaks FIRST: a dotted name is an aviary/tigl parameter,
+            # never an SU2 option, and remapping cannot help it. Measured
+            # 2026-08-16: Aircraft.Wing.ASPECT_RATIO and Aircraft.Wing.TAPER_RATIO
+            # were written into a config, and since one bad name rejects the
+            # whole file, EVERY solve in that run died at parse time in ~1.3 s --
+            # 43 rejections, no aero, uncoupled mission.
+            corrected, foreign = config_utils.split_foreign_params(overrides)
+            corrected, remapped = config_utils.remap_deprecated_keys(corrected)
             # A single unusable key rejects the ENTIRE config, so a solve dies
             # even when every pinned value is right (observed: TURB_MODEL, four
             # times in one run).
@@ -143,6 +151,8 @@ def configure_from_cpacs(
         }
         if ref_notes:
             result["reference_warnings"] = ref_notes
+        if foreign:
+            result["rejected_foreign_params"] = foreign
         if remapped:
             result["deprecated_remapped"] = remapped
         if dropped:
@@ -195,12 +205,15 @@ def update_config_entries(
     """
     try:
         record = SESSION_MANAGER.require(session_id)
-        corrected, warnings = config_utils.remap_deprecated_keys(updates)
+        corrected, foreign = config_utils.split_foreign_params(updates)
+        corrected, warnings = config_utils.remap_deprecated_keys(corrected)
         corrected, dropped_invalid = config_utils.drop_known_invalid(corrected)
         updated = config_utils.update_config_entries(
             record.config_path, corrected, create_if_missing=create_if_missing
         )
         result: dict[str, object] = {"updated_keys": updated}
+        if foreign:
+            result["rejected_foreign_params"] = foreign
         if dropped_invalid:
             result["dropped_invalid"] = dropped_invalid
             result["dropped_note"] = (

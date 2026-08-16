@@ -273,3 +273,80 @@ class TestKnownInvalidOptionsAreDropped:
             session["sid"], session["cpacs"], overrides={"ITER": 10}
         )
         assert "dropped_invalid" not in out
+
+
+class TestForeignParamsAreRejectedStructurally:
+    """Aviary/tigl parameter names must never reach the SU2 config.
+
+    Measured 2026-08-16 (budget_test, orchestrated_graph_routed link 0): the
+    task preamble hands every worker a list of aviary design parameters, so the
+    AERO worker wrote them into the SU2 config:
+
+        Line 40 AIRCRAFT.WING.ASPECT_RATIO: invalid option name. Did you mean AIRFOIL_MASS_RATIO?
+        Line 41 AIRCRAFT.WING.TAPER_RATIO:  invalid option name. Did you mean AIRFOIL_MASS_RATIO?
+
+    One bad name rejects the ENTIRE config, so every solve died at parse time in
+    ~1.3 s -- 43 rejections in one run, no aero, uncoupled mission.
+
+    Rejected on a STRUCTURAL rule rather than a name list: SU2 option names are
+    flat identifiers and never contain a dot, aviary/tigl names always do. The
+    B41 amendment recorded that invented names cannot be enumerated in advance;
+    this rejects the whole class instead of one name per incident.
+    """
+
+    def test_dotted_names_never_reach_the_config(self, session):
+        config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"],
+            overrides={"Aircraft.Wing.TAPER_RATIO": 0.3592, "ITER": 50},
+        )
+        e = _entries(session)
+        assert not [k for k in e if "." in k], "a dotted key reached the SU2 config"
+
+    def test_the_rejection_names_the_owning_server(self, session):
+        out = config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"],
+            overrides={"Aircraft.Wing.TAPER_RATIO": 0.3592},
+        )
+        rej = out["rejected_foreign_params"]
+        assert rej[0]["option"] == "Aircraft.Wing.TAPER_RATIO"
+        assert "set_aircraft_parameters" in rej[0]["belongs_to"]
+
+    def test_it_warns_off_su2s_dangerous_suggestion(self):
+        """SU2 answers 'Did you mean AIRFOIL_MASS_RATIO?' -- a VALID aeroelastic
+        option it would accept silently, giving a wrong solve instead of a loud
+        error. Same trap as MACH -> MACH_MOTION."""
+        from su2_mcp import config_utils
+        _, rej = config_utils.split_foreign_params({"Aircraft.Wing.TAPER_RATIO": 0.3})
+        assert "AIRFOIL_MASS_RATIO" in rej[0]["note"]
+
+    def test_valid_options_alongside_a_foreign_one_still_apply(self):
+        """One bad name must not cost the good ones -- that is the whole bug."""
+        from su2_mcp import config_utils
+        kept, rej = config_utils.split_foreign_params(
+            {"Aircraft.Wing.AREA": 126.0, "MACH_NUMBER": 0.78, "ITER": 50}
+        )
+        assert kept == {"MACH_NUMBER": 0.78, "ITER": 50}
+        assert len(rej) == 1
+
+    def test_mission_parameters_are_caught_too(self):
+        from su2_mcp import config_utils
+        _, rej = config_utils.split_foreign_params({"Mission.Design.RANGE": 2500})
+        assert "configure_mission" in rej[0]["belongs_to"]
+
+    def test_canonical_numerics_are_untouched(self, session):
+        """The seven options absent from get_valid_config_options must survive."""
+        canon = {
+            "KIND_TURB_MODEL": "SA", "MGCYCLE": "V_CYCLE", "JST_SENSOR_COEFF": "( 0.5, 0.02 )",
+            "REYNOLDS_NUMBER": 5000000.0, "CFL_ADAPT_PARAM": "( 0.1, 2.0, 10.0, 1e10 )",
+            "REF_DIMENSIONALIZATION": "DIMENSIONAL", "RESTART_SOL": "NO",
+        }
+        config_tools.configure_from_cpacs(session["sid"], session["cpacs"], overrides=canon)
+        e = _entries(session)
+        for key in canon:
+            assert key in e, f"{key} was stripped -- canonical numerics must survive"
+
+    def test_nothing_foreign_means_no_noise(self, session):
+        out = config_tools.configure_from_cpacs(
+            session["sid"], session["cpacs"], overrides={"ITER": 10}
+        )
+        assert "rejected_foreign_params" not in out
