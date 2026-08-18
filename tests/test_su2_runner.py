@@ -18,13 +18,19 @@ def test_run_success_parses_history_and_log_tail(
     history = tmp_path / "history.csv"
     history.write_text("iter,residual\n1,0.1\n2,0.01\n", encoding="utf-8")
 
-    def _fake_run(*_args: object, **_kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(returncode=0, stdout="line1\nline2\nline3\n")
-
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    # Drives a REAL process rather than monkeypatching subprocess.run.
+    #
+    # These tests used to patch subprocess.run, which meant they verified the
+    # mocked mechanism rather than the behaviour. That is exactly how the 2026-08-17
+    # hang survived: subprocess.run(..., stdout=PIPE, timeout=N) does not bound a
+    # solver whose forked ranks hold the pipe open, and no test could see it because
+    # every test replaced the call. A real script cannot lie about that.
+    solver = tmp_path / "fake_solver.sh"
+    solver.write_text("#!/bin/bash\nprintf 'line1\\nline2\\nline3\\n'\nexit 0\n")
+    solver.chmod(0o755)
 
     runner = SU2Runner(tmp_path)
-    result = runner.run("SU2_CFD", tmp_path / "config.cfg", 10, 2)
+    result = runner.run(str(solver), tmp_path / "config.cfg", 10, 2)
 
     assert result["success"] is True
     assert result["exit_code"] == 0
@@ -40,13 +46,14 @@ def test_run_timeout_returns_structured_error(
 ) -> None:
     """Timeouts should map to a stable error payload."""
 
-    def _fake_run(*_args: object, **_kwargs: object) -> SimpleNamespace:
-        raise subprocess.TimeoutExpired(cmd=["SU2_CFD"], timeout=10)
-
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    # A real process that outlives its cap, and forks a child that holds the
+    # output handle -- the shape that defeated the old PIPE-based timeout.
+    solver = tmp_path / "slow_solver.sh"
+    solver.write_text("#!/bin/bash\nsleep 60 & echo started\nsleep 60\n")
+    solver.chmod(0o755)
 
     runner = SU2Runner(tmp_path)
-    result = runner.run("SU2_CFD", tmp_path / "config.cfg", 10, 2)
+    result = runner.run(str(solver), tmp_path / "config.cfg", 2, 2)
 
     assert result["success"] is False
     assert result["error"]["type"] == "timeout"

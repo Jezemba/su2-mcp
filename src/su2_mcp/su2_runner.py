@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
+import signal
 import subprocess
+import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -183,17 +186,50 @@ class SU2Runner:
     ) -> dict[str, object]:
         """Execute a SU2 solver and return structured metadata."""
         start = time.time()
+        # Output goes to a FILE, and the solver gets its own process GROUP.
+        #
+        # `subprocess.run(..., stdout=PIPE, timeout=N)` looks like it bounds the
+        # call and does not. On timeout Python kills the direct child, but SU2
+        # forks MPI ranks that keep the write end of the pipe open, so the read
+        # never returns and the timeout is silently defeated. Measured 2026-08-17
+        # (MAS-Aviary all7 run 5): a 600 s cap blocked for 131 MINUTES, and the
+        # run died on the outer 150-minute wall clock having done 19 minutes of
+        # real work. A long solve can also fill the pipe buffer and deadlock
+        # before any timeout is reached.
+        #
+        # Same lesson this project already learned at the sweep level: kill the
+        # process GROUP, not the process.
         try:
-            process = subprocess.run(
-                [solver, str(config_path)],
-                cwd=self.workdir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=max_runtime_seconds,
-                check=False,
-                text=True,
-            )
-            output_text = process.stdout or ""
+            with tempfile.NamedTemporaryFile(
+                mode="w+", suffix=".log", dir=str(self.workdir), delete=False
+            ) as out_fh:
+                out_path = out_fh.name
+                process = subprocess.Popen(
+                    [solver, str(config_path)],
+                    cwd=self.workdir,
+                    stdout=out_fh,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    start_new_session=True,   # own process group
+                )
+                try:
+                    process.wait(timeout=max_runtime_seconds)
+                except subprocess.TimeoutExpired:
+                    # Kill the GROUP so no forked rank survives to hold anything open.
+                    try:
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        process.kill()
+                    process.wait(timeout=30)
+                    raise subprocess.TimeoutExpired(
+                        cmd=solver, timeout=max_runtime_seconds
+                    )
+            try:
+                with open(out_path, errors="replace") as fh:
+                    output_text = fh.read()
+            except OSError:
+                output_text = ""
+            process.returncode = process.returncode if process.returncode is not None else -1
             runtime = time.time() - start
             tail_lines = "\n".join(output_text.splitlines()[-capture_log_lines:])
             residual_history = self._parse_history_files()
