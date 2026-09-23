@@ -49,6 +49,7 @@ def read_from_cpacs(
     mach = fc.get("mach", 0.78)
     aoa = fc.get("aoa", 2.0)
     altitude_ft = fc.get("altitude_ft", 35000.0)
+    target_cl = fc.get("target_cl")
 
     return {
         "ref_area_m2": ref_area,
@@ -56,7 +57,33 @@ def read_from_cpacs(
         "mach": mach,
         "aoa_deg": aoa,
         "altitude_ft": altitude_ft,
+        "target_cl": float(target_cl) if target_cl is not None else None,
     }
+
+
+def _fixed_cl_block(inputs: dict[str, Any]) -> str:
+    """Trim the solve to the lift the aircraft actually needs (B111).
+
+    A cruise CL is not free: it is set by weight, CL = W / (q S). Solving at a fixed AOA answers a
+    different question and, at the low CL a fixed 2 deg produces on these aircraft (0.05-0.22 against
+    a cruise value near 0.55), the inviscid pressure drag is ~1e-4 while the discretisation error on
+    a ~120k-point transonic mesh is ~1e-2 -- so CD came back NEGATIVE in 5 of 16 links of
+    geoauth_all8_7960, converged and stable. SU2's fixed-CL mode updates AOA until the target lift is
+    reached, so CD is the drag at the lift the aircraft has to make.
+
+    Without a target this writes nothing and the solve stays at the given AOA.
+    """
+    target = inputs.get("target_cl")
+    if target is None:
+        return ""
+    return (
+        "\n% ----------- TRIM TO CRUISE LIFT (B111) -----------%\n"
+        "FIXED_CL_MODE= YES\n"
+        f"TARGET_CL= {float(target)}\n"
+        "DCL_DALPHA= 0.2\n"
+        "UPDATE_ALPHA= 5\n"
+        "ITER_DCL_DALPHA= 100\n"
+    )
 
 
 def _write_euler_config(
@@ -72,6 +99,7 @@ MATH_PROBLEM= DIRECT
 % ----------- FREESTREAM -----------%
 MACH_NUMBER= {inputs["mach"]}
 AOA= {inputs["aoa_deg"]}
+{_fixed_cl_block(inputs)}
 SIDESLIP_ANGLE= 0.0
 FREESTREAM_PRESSURE= 101325.0
 FREESTREAM_TEMPERATURE= 288.15

@@ -17,6 +17,7 @@ def configure_from_cpacs(
     mesh_file_name: str = "mesh.su2",
     ref_area: float | None = None,
     ref_length: float | None = None,
+    target_cl: float | None = None,
 ) -> dict[str, object]:
     """Build this session's SU2 config FROM the CPACS file, not by hand.
 
@@ -114,6 +115,23 @@ def configure_from_cpacs(
             "OUTPUT_FILES": "( RESTART, PARAVIEW )",
         }
 
+        # B111: trim to the lift the aircraft must make. A cruise CL is not free -- it is
+        # W / (q S) -- and solving at a fixed AOA answers a different question. At the CL a
+        # fixed 2 deg produces here (0.05-0.22 against a cruise value near 0.55) the inviscid
+        # pressure drag is ~1e-4 while a ~120k-point transonic mesh errs by ~1e-2, so CD came
+        # back NEGATIVE, converged and stable, in 5 of 16 links of geoauth_all8_7960. With a
+        # target, SU2 updates AOA until the lift matches and CD is the drag at that lift.
+        trim: dict[str, Any] = {}
+        if target_cl is not None:
+            trim = {
+                "FIXED_CL_MODE": "YES",
+                "TARGET_CL": float(target_cl),
+                "DCL_DALPHA": 0.2,
+                "UPDATE_ALPHA": 5,
+                "ITER_DCL_DALPHA": 100,
+            }
+            entries.update(trim)
+
         # Caller's pinned flight state / numerics win.
         dropped: list[str] = []
         foreign: list[dict[str, str]] = []
@@ -147,6 +165,13 @@ def configure_from_cpacs(
                 "ref_length_source": ref_source_length,
             },
             "keys_written": sorted(entries),
+            "trim": ({"target_cl": float(target_cl), "note":
+                      "AOA is solved for, not fixed: CD is the drag at this lift."}
+                     if target_cl is not None else
+                     {"target_cl": None, "note":
+                      "No target CL given, so the solve stays at the configured AOA and its CL "
+                      "is whatever that angle produces -- which is not necessarily a cruise "
+                      "condition. Pass target_cl = W / (q * S) for the drag at cruise lift."}),
             "overrides_applied": sorted(overrides) if overrides else [],
         }
         if ref_notes:
