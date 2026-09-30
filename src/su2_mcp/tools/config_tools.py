@@ -115,7 +115,12 @@ def configure_from_cpacs(
             "MARKER_FAR": "( farfield )",
             "HISTORY_OUTPUT": "( ITER, RMS_RES, AERO_COEFF )",
             "CONV_FILENAME": "history",
-            "OUTPUT_FILES": "( RESTART, PARAVIEW )",
+            # SURFACE_PARAVIEW writes surface_flow.vtu: the aircraft's skin with Cp, a few MB
+            # against the volume file's ~24 MB, and the file you open to SEE what was solved. Its
+            # absence is why a one-winged mesh (B115) went unnoticed through every study. The name
+            # and the trio are SU2's own default in config_template.cfg.
+            "OUTPUT_FILES": "( RESTART, PARAVIEW, SURFACE_PARAVIEW )",
+            "SURFACE_FILENAME": "surface_flow",
         }
 
         # B111: trim to the lift the aircraft must make. A cruise CL is not free -- it is

@@ -86,3 +86,17 @@ def test_without_a_target_the_config_is_unchanged_and_says_so(tmp_path, monkeypa
     assert "FIXED_CL_MODE" not in text
     assert out["trim"]["target_cl"] is None
     assert "not necessarily a cruise condition" in out["trim"]["note"]
+
+
+# ---- the solved geometry must be inspectable (B115) ----------------------------------------------
+
+def test_the_surface_is_written_for_inspection(tmp_path, monkeypatch):
+    """surface_flow.vtu is what you open in ParaView to SEE what was solved.
+
+    Without it, nothing in the pipeline ever showed the aircraft, and a mesh carrying one wing and
+    one tailplane (B115) was solved in every study on this machine without anyone seeing it.
+    OUTPUT_FILES= (RESTART, PARAVIEW, SURFACE_PARAVIEW) is SU2's own default.
+    """
+    _out, text = _config(tmp_path, monkeypatch)
+    assert "SURFACE_PARAVIEW" in text
+    assert "SURFACE_FILENAME= surface_flow" in text
