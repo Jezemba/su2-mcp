@@ -10,6 +10,9 @@ from su2_mcp import config_utils
 from su2_mcp.tools.session import SESSION_MANAGER, _error
 
 
+_TRIM_MIN_ITER = 500       # fixed-CL needs iterations for the angle to settle
+
+
 def configure_from_cpacs(
     session_id: str,
     cpacs_file_path: str,
@@ -127,9 +130,21 @@ def configure_from_cpacs(
                 "FIXED_CL_MODE": "YES",
                 "TARGET_CL": float(target_cl),
                 "DCL_DALPHA": 0.2,
-                "UPDATE_ALPHA": 5,
-                "ITER_DCL_DALPHA": 100,
+                # SU2 8.3 renamed this; `UPDATE_ALPHA` is rejected as an invalid option name, and a
+                # single bad key rejects the WHOLE config -- the solve then dies at parse time in
+                # ~2.6 s with no history and no CL/CD. Probed against SU2_CFD 8.3.0 "Harrier".
+                "UPDATE_AOA_ITER_LIMIT": 100,
+                "ITER_DCL_DALPHA": 500,
             }
+            # Trimming needs room: the angle is updated periodically and the flow has to
+            # re-converge after each update. The base config's ITER= 120 is sized for a fixed-AOA
+            # solve that converged in 60-100 iterations, which leaves no iterations for the trim.
+            try:
+                current_iter = int(entries.get("ITER", 0))
+            except (TypeError, ValueError):
+                current_iter = 0
+            if current_iter < _TRIM_MIN_ITER:
+                trim["ITER"] = _TRIM_MIN_ITER
             entries.update(trim)
 
         # Caller's pinned flight state / numerics win.

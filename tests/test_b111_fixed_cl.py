@@ -21,7 +21,9 @@ def test_a_target_turns_on_fixed_cl_mode():
     block = _fixed_cl_block({"target_cl": 0.55})
     assert "FIXED_CL_MODE= YES" in block
     assert "TARGET_CL= 0.55" in block
-    assert "UPDATE_ALPHA=" in block and "DCL_DALPHA=" in block
+    assert "DCL_DALPHA=" in block
+    # SU2 8.3 rejects UPDATE_ALPHA, and one bad key rejects the whole config.
+    assert "UPDATE_AOA_ITER_LIMIT=" in block and "UPDATE_ALPHA=" not in block
 
 
 def _config(tmp_path, monkeypatch, **kwargs):
@@ -49,6 +51,34 @@ def test_the_config_carries_the_target(tmp_path, monkeypatch):
     assert "FIXED_CL_MODE= YES" in text
     assert "TARGET_CL= 0.55" in text
     assert out["trim"]["target_cl"] == 0.55
+    assert "UPDATE_ALPHA=" not in text          # SU2 8.3 rejects it -- and one bad key kills the config
+    assert "UPDATE_AOA_ITER_LIMIT= 100" in text
+
+
+def test_trimming_raises_the_iteration_budget(tmp_path, monkeypatch):
+    """A fixed-AOA solve converges in 60-100 iterations; the trim needs room after each update."""
+    out, text = _config(tmp_path, monkeypatch, target_cl=0.55)
+    assert "ITER= 500" in text
+
+
+def test_a_caller_pinned_iteration_count_is_kept(tmp_path, monkeypatch):
+    out, text = _config(tmp_path, monkeypatch, target_cl=0.55, overrides={"ITER": 900})
+    assert "ITER= 900" in text
+
+
+def test_every_option_written_is_valid_for_this_su2(tmp_path, monkeypatch):
+    """Probed against SU2_CFD 8.3.0: an invalid option name rejects the entire config."""
+    import shutil
+    import subprocess
+
+    su2 = shutil.which("SU2_CFD") or "/home/jezemba/.conda/envs/su2env/bin/SU2_CFD"
+    if not Path(su2).exists():
+        pytest.skip("SU2_CFD not installed here")
+    _out, text = _config(tmp_path, monkeypatch, target_cl=0.55)
+    probe = tmp_path / "probe.cfg"
+    probe.write_text(text)
+    result = subprocess.run([su2, str(probe)], capture_output=True, text=True, timeout=120)
+    assert "invalid option name" not in (result.stdout + result.stderr)
 
 
 def test_without_a_target_the_config_is_unchanged_and_says_so(tmp_path, monkeypatch):

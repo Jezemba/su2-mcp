@@ -81,8 +81,8 @@ def _fixed_cl_block(inputs: dict[str, Any]) -> str:
         "FIXED_CL_MODE= YES\n"
         f"TARGET_CL= {float(target)}\n"
         "DCL_DALPHA= 0.2\n"
-        "UPDATE_ALPHA= 5\n"
-        "ITER_DCL_DALPHA= 100\n"
+        "UPDATE_AOA_ITER_LIMIT= 100\n"      # SU2 8.3 name; UPDATE_ALPHA is rejected
+        "ITER_DCL_DALPHA= 500\n"
     )
 
 
