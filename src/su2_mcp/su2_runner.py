@@ -185,7 +185,10 @@ class SU2Runner:
         capture_log_lines: int,
     ) -> dict[str, object]:
         """Execute a SU2 solver and return structured metadata."""
+        from su2_mcp.mpi import parallel_decision
+
         start = time.time()
+        launch = parallel_decision(solver)
         # Output goes to a FILE, and the solver gets its own process GROUP.
         #
         # `subprocess.run(..., stdout=PIPE, timeout=N)` looks like it bounds the
@@ -205,7 +208,7 @@ class SU2Runner:
             ) as out_fh:
                 out_path = out_fh.name
                 process = subprocess.Popen(
-                    [solver, str(config_path)],
+                    [*launch["command"], str(config_path)],
                     cwd=self.workdir,
                     stdout=out_fh,
                     stderr=subprocess.STDOUT,
@@ -234,6 +237,9 @@ class SU2Runner:
             tail_lines = "\n".join(output_text.splitlines()[-capture_log_lines:])
             residual_history = self._parse_history_files()
             return {
+                "launch_mode": launch["mode"],
+                "mpi_ranks": launch["ranks"],
+                "launch_reason": launch["reason"],
                 "success": process.returncode == 0,
                 "solver": solver,
                 "config_used": str(config_path),
