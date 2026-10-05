@@ -154,6 +154,13 @@ def run_su2_solver(
                 coeffs = final_coefficients(record.workdir)
                 if coeffs:
                     result["final_coefficients"] = coeffs
+                    # B138: report a drag no lower than the induced drag of the lift.
+                    from su2_mcp.drag_model import assess_drag
+
+                    result["drag_assessment"] = assess_drag(
+                        coeffs.get("CL"), coeffs.get("CD"),
+                        getattr(record, "aspect_ratio", None),
+                        getattr(record, "oswald_efficiency", None))
                 else:
                     result["final_coefficients_note"] = (
                         "The solve succeeded but no CL/CD could be read from the "

@@ -71,6 +71,9 @@ class SessionRecord:
     config_path: Path
     mesh_path: Path | None = None
     last_run_metadata: LastRunMetadata | None = None
+    # For the induced-drag floor on the reported CD (drag_model.assess_drag, Avion B138).
+    aspect_ratio: float | None = None
+    oswald_efficiency: float | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 

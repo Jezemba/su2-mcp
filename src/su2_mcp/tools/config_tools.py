@@ -21,8 +21,19 @@ def configure_from_cpacs(
     ref_area: float | None = None,
     ref_length: float | None = None,
     target_cl: float | None = None,
+    aspect_ratio: float | None = None,
+    oswald_efficiency: float | None = None,
+    cruise_mach: float | None = None,
+    cruise_altitude_ft: float | None = None,
 ) -> dict[str, object]:
     """Build this session's SU2 config FROM the CPACS file, not by hand.
+
+    ``cruise_mach`` / ``cruise_altitude_ft`` set the flight state from the mission: MACH_NUMBER and
+    the ISA freestream pressure and temperature at that altitude. They are applied after
+    ``overrides``, so the mission point wins over a pinned numerics dict (Avion B132).
+    ``aspect_ratio`` (full wing, span^2 / area) and optional ``oswald_efficiency`` are stored on the
+    session; run_su2_solver uses them to report a drag no lower than the induced drag of the lift
+    (Avion B138). Without them the raw SU2 CD is reported, marked unchecked.
 
     Reference quantities are the aircraft's, so they must come from the aircraft
     definition rather than being retyped. This reads ``REF_AREA`` and
@@ -172,12 +183,40 @@ def configure_from_cpacs(
         else:
             remapped = []
 
+        # The mission's flight state wins over the pinned numerics (B132).
+        flight_state: dict[str, Any] = {}
+        if cruise_mach is not None:
+            entries["MACH_NUMBER"] = float(cruise_mach)
+            flight_state["MACH_NUMBER"] = float(cruise_mach)
+        if cruise_altitude_ft is not None:
+            from su2_mcp.drag_model import isa
+
+            p, t = isa(cruise_altitude_ft)
+            entries["FREESTREAM_PRESSURE"] = round(p, 1)
+            entries["FREESTREAM_TEMPERATURE"] = round(t, 2)
+            flight_state.update({"altitude_ft": float(cruise_altitude_ft),
+                                 "FREESTREAM_PRESSURE": entries["FREESTREAM_PRESSURE"],
+                                 "FREESTREAM_TEMPERATURE": entries["FREESTREAM_TEMPERATURE"]})
+
+        if aspect_ratio is not None:
+            record.aspect_ratio = float(aspect_ratio)
+        if oswald_efficiency is not None:
+            record.oswald_efficiency = float(oswald_efficiency)
+
         config_utils.update_config_entries(
             record.config_path, entries, create_if_missing=True
         )
 
         result: dict[str, object] = {
             "config_path": str(record.config_path),
+            "flight_state": flight_state or {"note": "No cruise_mach / cruise_altitude_ft given: "
+                                             "MACH_NUMBER and freestream come from overrides or "
+                                             "the adapter defaults."},
+            "drag_floor": ({"aspect_ratio": getattr(record, "aspect_ratio", None),
+                            "oswald_efficiency": getattr(record, "oswald_efficiency", None)}
+                           if getattr(record, "aspect_ratio", None) else
+                           {"note": "No aspect_ratio: the reported CD will not be checked against "
+                                    "the induced-drag floor."}),
             "references": {
                 "REF_AREA": derived["ref_area_m2"],
                 "REF_LENGTH": derived["ref_length_m"],

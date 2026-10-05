@@ -23,8 +23,16 @@ def create_su2_session(
     overrides: dict | None = None,
     ref_area: float | None = None,
     ref_length: float | None = None,
+    target_cl: float | None = None,
+    aspect_ratio: float | None = None,
+    oswald_efficiency: float | None = None,
+    cruise_mach: float | None = None,
+    cruise_altitude_ft: float | None = None,
 ) -> dict[str, object]:
     """Create a new SU2 session, configured from CPACS when a path is given.
+
+    Takes the same configuration arguments as ``configure_from_cpacs`` (target_cl, aspect_ratio,
+    oswald_efficiency, cruise_mach, cruise_altitude_ft) and passes them on.
 
     A session created without ``cpacs_file_path`` starts from a minimal config
     that CANNOT solve: SU2 rejects it for absent markers, solver and numerics.
@@ -63,6 +71,11 @@ def create_su2_session(
                 mesh_file_name=mesh_file_name,
                 ref_area=ref_area,
                 ref_length=ref_length,
+                target_cl=target_cl,
+                aspect_ratio=aspect_ratio,
+                oswald_efficiency=oswald_efficiency,
+                cruise_mach=cruise_mach,
+                cruise_altitude_ft=cruise_altitude_ft,
             )
             if "error" in configured:
                 # The session exists and is usable; only the auto-config failed.
@@ -78,7 +91,13 @@ def create_su2_session(
             else:
                 result["configured"] = True
                 result["references"] = configured.get("references")
+                result["flight_state"] = configured.get("flight_state")
+                result["drag_floor"] = configured.get("drag_floor")
         else:
+            if aspect_ratio is not None:
+                record.aspect_ratio = float(aspect_ratio)
+            if oswald_efficiency is not None:
+                record.oswald_efficiency = float(oswald_efficiency)
             result["configured"] = False
             result["warning"] = (
                 "This session holds a MINIMAL config that SU2 will reject (no "
