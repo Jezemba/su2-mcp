@@ -58,7 +58,8 @@ def test_the_config_carries_the_target(tmp_path, monkeypatch):
 def test_trimming_raises_the_iteration_budget(tmp_path, monkeypatch):
     """A fixed-AOA solve converges in 60-100 iterations; the trim needs room after each update."""
     out, text = _config(tmp_path, monkeypatch, target_cl=0.55)
-    assert "ITER= 500" in text
+    # Avion B152: 360 (was 500), so a solve that never trims still ends before the caller's 3600 s clock.
+    assert "ITER= 360" in text
 
 
 def test_a_caller_pinned_iteration_count_is_kept(tmp_path, monkeypatch):

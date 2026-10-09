@@ -41,3 +41,13 @@ def test_the_trim_uses_the_measured_lift_slope():
     import inspect
 
     assert '"DCL_DALPHA": 0.075' in inspect.getsource(config_tools)
+
+
+def test_the_trim_can_converge_and_ends_before_the_watchdog():
+    """Avion B152: CONV_CAUCHY_EPS (default 1e-10) is SU2's CL tolerance in fixed-CL mode."""
+    from su2_mcp.tools import config_tools
+    import inspect
+
+    src = inspect.getsource(config_tools)
+    assert '"CONV_CAUCHY_EPS": 0.01' in src and '"ITER_DCL_DALPHA": 0,' in src
+    assert config_tools._TRIM_MIN_ITER * 8.4 < 3600     # worst case at the measured ~8.4 s/iteration

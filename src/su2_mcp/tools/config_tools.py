@@ -10,7 +10,11 @@ from su2_mcp import config_utils
 from su2_mcp.tools.session import SESSION_MANAGER, _error
 
 
-_TRIM_MIN_ITER = 500       # fixed-CL needs iterations for the angle to settle
+# Fixed-CL needs iterations for the angle to settle, but the cap must also end a solve that never trims
+# before the caller's clock does: at ~8.4 s per iteration on the 2.3M-cell whole-aircraft mesh, 500
+# iterations (70 min) outlived MAS-Aviary's 3600 s watchdog twice in the 2026-10-08 sandbox, and the
+# stage got no result at all. 360 is ~50 min; a trimmed solve converges in ~250-300 (Avion B152).
+_TRIM_MIN_ITER = 360
 
 
 def configure_from_cpacs(
@@ -154,7 +158,16 @@ def configure_from_cpacs(
                 # single bad key rejects the WHOLE config -- the solve then dies at parse time in
                 # ~2.6 s with no history and no CL/CD. Probed against SU2_CFD 8.3.0 "Harrier".
                 "UPDATE_AOA_ITER_LIMIT": 100,
-                "ITER_DCL_DALPHA": 500,
+                # Avion B152, read from SU2 8.3 CEulerSolver::FixedCL_Convergence: the trim counts as
+                # converged only when the residual has converged AND |CL - TARGET_CL| < CONV_CAUCHY_EPS/2.
+                # Unset, CONV_CAUCHY_EPS is 1e-10, so CL never counted as on target and the angle was
+                # updated every UPDATE_AOA_ITER_LIMIT iterations until ITER ran out. 0.01 accepts CL
+                # within +/-0.005 (~1% of a cruise CL). CONV_CAUCHY_EPS is otherwise used only by Cauchy
+                # convergence fields (COutput), and these solves converge on RMS_DENSITY.
+                "CONV_CAUCHY_EPS": 0.01,
+                # After the trim converges SU2 runs ITER_DCL_DALPHA more iterations to finite-difference
+                # dCL/dalpha (500 by default); 0 ends the solve as soon as CL is on target.
+                "ITER_DCL_DALPHA": 0,
             }
             # Trimming needs room: the angle is updated periodically and the flow has to
             # re-converge after each update. The base config's ITER= 120 is sized for a fixed-AOA
