@@ -12,7 +12,6 @@ from pathlib import Path
 DEPRECATED_OPTIONS: dict[str, str] = {
     "PHYSICAL_PROBLEM": "SOLVER",
     "CONV_CRITERIA": "CONV_FIELD",
-    "RESIDUAL_REDUCTION": "CONV_RESIDUAL_MINVAL",
     "RESIDUAL_MINVAL": "CONV_RESIDUAL_MINVAL",
     "OUTPUT_FORMAT": "OUTPUT_FILES",
     "WRT_SOL_FREQ": "OUTPUT_WRT_FREQ",
@@ -32,7 +31,6 @@ DEPRECATED_OPTIONS: dict[str, str] = {
     "MACH": "MACH_NUMBER",
     "FREESTREAM_MACH": "MACH_NUMBER",
     "MACH_INF": "MACH_NUMBER",
-    "NUM_METHOD": "NUM_METHOD_GRAD",
     # Not an SU2 option at any version -- callers invent it. Its values ("SA",
     # "SST") are exactly KIND_TURB_MODEL's domain, so renaming preserves the
     # caller's intent. It was briefly in KNOWN_INVALID_OPTIONS instead, and live
@@ -136,6 +134,49 @@ def drop_known_invalid(
         else:
             kept[key] = value
     return kept, dropped
+
+
+# Avion B151 (2026-10-08): two remaps changed MEANING, not just the name. MAS-Aviary v2b149: an agent sent
+# RESIDUAL_REDUCTION 6 and NUM_METHOD "Jacobian"; they became CONV_RESIDUAL_MINVAL= 6 and an invalid
+# NUM_METHOD_GRAD, and SU2 died in 1.6 s. RESIDUAL_REDUCTION counted orders of reduction (positive);
+# CONV_RESIDUAL_MINVAL is an absolute log10 threshold (negative). NUM_METHOD is not an SU2 option.
+_GRADIENT_METHODS = {"GREEN_GAUSS", "WEIGHTED_LEAST_SQUARES", "LEAST_SQUARES"}
+
+
+def reject_meaning_changes(
+    updates: MutableMapping[str, object],
+) -> tuple[dict[str, object], list[dict[str, str]]]:
+    """Refuse updates whose obvious rename would change their meaning. Returns (kept, rejected)."""
+    kept: dict[str, object] = {}
+    rejected: list[dict[str, str]] = []
+    for key, value in updates.items():
+        name = str(key).upper()
+        if name == "RESIDUAL_REDUCTION":
+            rejected.append({"key": key, "value": str(value), "reason": (
+                "RESIDUAL_REDUCTION (orders of residual reduction) has no SU2 8.3 equivalent with the same "
+                "meaning. CONV_RESIDUAL_MINVAL is an absolute log10 threshold: -6 means stop when "
+                "rms[Rho] < 1e-6. The convergence settings are set by configure_from_cpacs.")})
+        elif name == "NUM_METHOD":
+            if str(value).strip().upper() in _GRADIENT_METHODS:
+                kept["NUM_METHOD_GRAD"] = value
+            else:
+                rejected.append({"key": key, "value": str(value), "reason": (
+                    "NUM_METHOD is not an SU2 option. The gradient method is NUM_METHOD_GRAD "
+                    "(GREEN_GAUSS | WEIGHTED_LEAST_SQUARES); the convective scheme is CONV_NUM_METHOD_FLOW.")})
+        elif name == "CONV_RESIDUAL_MINVAL" and _is_positive(value):
+            rejected.append({"key": key, "value": str(value), "reason": (
+                "CONV_RESIDUAL_MINVAL is a log10 threshold and must be negative (e.g. -6); a positive "
+                "value is met at the first iteration.")})
+        else:
+            kept[key] = value
+    return kept, rejected
+
+
+def _is_positive(value: object) -> bool:
+    try:
+        return float(str(value).strip()) > 0
+    except ValueError:
+        return False
 
 
 def remap_deprecated_keys(

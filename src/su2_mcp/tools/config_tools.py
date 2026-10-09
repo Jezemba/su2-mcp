@@ -145,7 +145,11 @@ def configure_from_cpacs(
             trim = {
                 "FIXED_CL_MODE": "YES",
                 "TARGET_CL": float(target_cl),
-                "DCL_DALPHA": 0.2,
+                # dCL/dalpha per degree, used to size each angle update. 0.2 is SU2's default; measured
+                # on the D150 whole-aircraft mesh at M0.78 it is ~0.075 (v2b149: a ~1.6 deg step moved
+                # CL 0.240 -> 0.359), so 0.2 under-stepped every update by 2.7x and the trim needed 6-7
+                # updates (~700 iterations) instead of ~2 (Avion B151).
+                "DCL_DALPHA": 0.075,
                 # SU2 8.3 renamed this; `UPDATE_ALPHA` is rejected as an invalid option name, and a
                 # single bad key rejects the WHOLE config -- the solve then dies at parse time in
                 # ~2.6 s with no history and no CL/CD. Probed against SU2_CFD 8.3.0 "Harrier".
@@ -166,6 +170,7 @@ def configure_from_cpacs(
         # Caller's pinned flight state / numerics win.
         dropped: list[str] = []
         foreign: list[dict[str, str]] = []
+        meaning_rejected: list[dict[str, str]] = []
         if overrides:
             # Cross-server leaks FIRST: a dotted name is an aviary/tigl parameter,
             # never an SU2 option, and remapping cannot help it. Measured
@@ -174,6 +179,7 @@ def configure_from_cpacs(
             # whole file, EVERY solve in that run died at parse time in ~1.3 s --
             # 43 rejections, no aero, uncoupled mission.
             corrected, foreign = config_utils.split_foreign_params(overrides)
+            corrected, meaning_rejected = config_utils.reject_meaning_changes(corrected)
             corrected, remapped = config_utils.remap_deprecated_keys(corrected)
             # A single unusable key rejects the ENTIRE config, so a solve dies
             # even when every pinned value is right (observed: TURB_MODEL, four
@@ -237,6 +243,8 @@ def configure_from_cpacs(
             result["reference_warnings"] = ref_notes
         if foreign:
             result["rejected_foreign_params"] = foreign
+        if meaning_rejected:
+            result["rejected_changes_meaning"] = meaning_rejected
         if remapped:
             result["deprecated_remapped"] = remapped
         if dropped:
@@ -290,6 +298,7 @@ def update_config_entries(
     try:
         record = SESSION_MANAGER.require(session_id)
         corrected, foreign = config_utils.split_foreign_params(updates)
+        corrected, meaning_rejected = config_utils.reject_meaning_changes(corrected)
         corrected, warnings = config_utils.remap_deprecated_keys(corrected)
         corrected, dropped_invalid = config_utils.drop_known_invalid(corrected)
         updated = config_utils.update_config_entries(
@@ -298,6 +307,8 @@ def update_config_entries(
         result: dict[str, object] = {"updated_keys": updated}
         if foreign:
             result["rejected_foreign_params"] = foreign
+        if meaning_rejected:
+            result["rejected_changes_meaning"] = meaning_rejected
         if dropped_invalid:
             result["dropped_invalid"] = dropped_invalid
             result["dropped_note"] = (
