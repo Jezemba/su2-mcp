@@ -12,7 +12,10 @@ launch when, and only when, a parallel launch is actually possible:
 
 Rank count comes from the ``SU2_MPI_RANKS`` environment variable: unset or
 ``0`` means auto (all physical cores), ``1`` forces serial, any other
-integer is used as given. The decision taken is reported in the run
+integer is used as given, and ``auto`` (Avion, 2026-10-09) takes only the
+cores that are free when the solve starts: physical cores minus the
+1-minute load average minus ``SU2_MPI_FREE_CORES`` (default 4), capped at
+``SU2_MPI_MAX_RANKS``, never below 1 -- for a machine other people use. The decision taken is reported in the run
 metadata, never guessed at afterwards.
 """
 
@@ -119,6 +122,28 @@ def _extra_launcher_args(launcher: str) -> list[str]:
     return []
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "").strip())
+    except ValueError:
+        return default
+
+
+def _load_aware_ranks() -> tuple[int, str]:
+    """Ranks for SU2_MPI_RANKS=auto: the free physical cores, minus a reserve, capped."""
+    physical = _physical_cores()
+    try:
+        busy = os.getloadavg()[0]
+    except OSError:
+        busy = 0.0
+    reserve = max(0, _env_int("SU2_MPI_FREE_CORES", 4))
+    cap = _env_int("SU2_MPI_MAX_RANKS", physical) or physical
+    free = int(physical - busy) - reserve
+    ranks = max(1, min(cap, free))
+    return ranks, (f"load-aware: {physical} physical cores, load {busy:.1f}, reserve {reserve}, "
+                   f"cap {cap} -> {ranks} rank(s)")
+
+
 def _requested_ranks() -> int:
     raw = os.environ.get("SU2_MPI_RANKS", "").strip()
     if not raw:
@@ -182,7 +207,11 @@ def parallel_decision(solver: str) -> dict[str, Any]:
 
     # An MPI build is ALWAYS started through the launcher, even for one rank:
     # Open MPI 4.1 singletons fail in MPI_Win_create (seen 2026-10-05).
-    ranks = 1 if requested == 1 else (requested or _physical_cores())
+    load_note = ""
+    if os.environ.get("SU2_MPI_RANKS", "").strip().lower() == "auto":
+        ranks, load_note = _load_aware_ranks()
+    else:
+        ranks = 1 if requested == 1 else (requested or _physical_cores())
     return {
         "command": [
             launcher,
@@ -193,5 +222,6 @@ def parallel_decision(solver: str) -> dict[str, Any]:
         ],
         "ranks": ranks,
         "mode": "mpi" if ranks > 1 else "mpi_single_rank",
-        "reason": f"{os.path.basename(mpi_exe)} via {os.path.basename(launcher)}",
+        "reason": f"{os.path.basename(mpi_exe)} via {os.path.basename(launcher)}"
+        + (f"; {load_note}" if load_note else ""),
     }
