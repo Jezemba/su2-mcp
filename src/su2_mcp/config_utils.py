@@ -119,6 +119,32 @@ def split_foreign_params(
     return kept, rejected
 
 
+# Avion B173 (2026-10-10, aipexws8 v2b172): an agent put the TOOL's own arguments into `overrides`
+# (cruise_mach, cruise_altitude_ft, aspect_ratio, target_cl). They were written into config.cfg as SU2
+# options; SU2 rejects a whole config for one invalid name, and nothing could remove them. These names
+# are this server's arguments, never SU2 options, so they are taken out of `overrides` by name.
+# ref_area / ref_length are arguments too, but REF_AREA / REF_LENGTH are also real SU2 options, so they
+# are left to SU2.
+TOOL_ARGUMENT_NAMES: frozenset[str] = frozenset({
+    "cruise_mach", "cruise_altitude_ft", "aspect_ratio", "target_cl", "oswald_efficiency",
+})
+
+
+def split_tool_arguments(
+    updates: MutableMapping[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Separate this tool's own argument names from SU2 options. Returns (kept, arguments)."""
+    kept: dict[str, object] = {}
+    arguments: dict[str, object] = {}
+    for key, value in updates.items():
+        name = str(key).strip().lower()
+        if name in TOOL_ARGUMENT_NAMES:
+            arguments[name] = value
+        else:
+            kept[key] = value
+    return kept, arguments
+
+
 def drop_known_invalid(
     updates: MutableMapping[str, object],
 ) -> tuple[dict[str, object], list[str]]:
@@ -248,12 +274,25 @@ def update_config_entries(
     config_path: Path,
     updates: MutableMapping[str, object],
     create_if_missing: bool = True,
+    remove: Iterable[str] = (),
 ) -> list[str]:
-    """Update configuration entries and persist them to disk."""
+    """Update configuration entries and persist them to disk.
+
+    A value of None removes the option (B173: there was no way to delete a line, so one invalid
+    name written once made every later solve fail). ``remove`` names options to delete as well;
+    both match case-insensitively.
+    """
     entries = parse_config_file(config_path)
     updated_keys: list[str] = []
 
+    doomed = {str(k).upper() for k in remove}
+    doomed |= {str(k).upper() for k, v in updates.items() if v is None}
+    if doomed:
+        entries = {k: v for k, v in entries.items() if str(k).upper() not in doomed}
+
     for key, value in updates.items():
+        if value is None:
+            continue
         if key in entries or create_if_missing:
             entries[key] = value
             updated_keys.append(key)

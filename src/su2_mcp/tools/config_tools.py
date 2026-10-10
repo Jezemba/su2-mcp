@@ -69,6 +69,28 @@ def configure_from_cpacs(
     try:
         record = SESSION_MANAGER.require(session_id)
 
+        # B173: this tool's own arguments passed inside `overrides` are used AS the arguments (an
+        # explicit argument wins) and never written into the SU2 config.
+        moved_arguments: dict[str, object] = {}
+        if overrides:
+            overrides, from_overrides = config_utils.split_tool_arguments(overrides)
+            given = {"cruise_mach": cruise_mach, "cruise_altitude_ft": cruise_altitude_ft,
+                     "aspect_ratio": aspect_ratio, "target_cl": target_cl,
+                     "oswald_efficiency": oswald_efficiency}
+            for name, value in from_overrides.items():
+                try:
+                    number = float(value) if value is not None else None
+                except (TypeError, ValueError):
+                    number = None
+                if given.get(name) is None and number is not None:
+                    given[name] = number
+                    moved_arguments[name] = number
+                else:
+                    moved_arguments[name] = "ignored (argument already given, or not a number)"
+            cruise_mach, cruise_altitude_ft = given["cruise_mach"], given["cruise_altitude_ft"]
+            aspect_ratio, target_cl = given["aspect_ratio"], given["target_cl"]
+            oswald_efficiency = given["oswald_efficiency"]
+
         path = Path(cpacs_file_path)
         if not path.is_file():
             return _error(
@@ -222,9 +244,19 @@ def configure_from_cpacs(
         if oswald_efficiency is not None:
             record.oswald_efficiency = float(oswald_efficiency)
 
+        # B173: the existing config is merged into, so remove what SU2 has rejected in this session and
+        # any of this tool's argument names written by an earlier call; otherwise they survive every
+        # reconfiguration and every solve dies at parse time.
+        existing = config_utils.parse_config_file(record.config_path) if record.config_path.exists() else {}
+        rejected_here = {str(n).upper() for n in (getattr(record, "invalid_options", None) or ())}
+        stale = sorted(k for k in existing
+                       if str(k).upper() in rejected_here
+                       or str(k).strip().lower() in config_utils.TOOL_ARGUMENT_NAMES)
         config_utils.update_config_entries(
-            record.config_path, entries, create_if_missing=True
+            record.config_path, entries, create_if_missing=True, remove=stale
         )
+        if isinstance(getattr(record, "invalid_options", None), set):
+            record.invalid_options.clear()
 
         result: dict[str, object] = {
             "config_path": str(record.config_path),
@@ -260,6 +292,13 @@ def configure_from_cpacs(
             result["rejected_changes_meaning"] = meaning_rejected
         if remapped:
             result["deprecated_remapped"] = remapped
+        if moved_arguments:
+            result["arguments_taken_from_overrides"] = moved_arguments
+            result["arguments_note"] = (
+                "These are this tool's arguments, not SU2 options; they were used as arguments and not "
+                "written into the config. Pass them as arguments next time.")
+        if stale:
+            result["removed_invalid_options"] = stale
         if dropped:
             result["dropped_invalid"] = dropped
             result["dropped_note"] = (
@@ -310,6 +349,7 @@ def update_config_entries(
     """
     try:
         record = SESSION_MANAGER.require(session_id)
+        updates, tool_arguments = config_utils.split_tool_arguments(updates)
         corrected, foreign = config_utils.split_foreign_params(updates)
         corrected, meaning_rejected = config_utils.reject_meaning_changes(corrected)
         corrected, warnings = config_utils.remap_deprecated_keys(corrected)
@@ -318,6 +358,16 @@ def update_config_entries(
             record.config_path, corrected, create_if_missing=create_if_missing
         )
         result: dict[str, object] = {"updated_keys": updated}
+        removed = sorted(str(k) for k, v in corrected.items() if v is None)
+        if removed:
+            result["removed_keys"] = removed
+            if isinstance(getattr(record, "invalid_options", None), set):
+                record.invalid_options.difference_update({k.upper() for k in removed})
+        if tool_arguments:
+            result["rejected_tool_arguments"] = sorted(tool_arguments)
+            result["tool_arguments_note"] = (
+                "These are arguments of create_su2_session / configure_from_cpacs, not SU2 options, and "
+                "were not written. Pass them there as arguments.")
         if foreign:
             result["rejected_foreign_params"] = foreign
         if meaning_rejected:

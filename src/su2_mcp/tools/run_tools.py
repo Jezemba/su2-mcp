@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from su2_mcp.config_utils import ensure_force_output
 from su2_mcp.su2_runner import (
     SU2Runner,
@@ -115,6 +117,18 @@ def _as_float(value: object, default: float = 0.0) -> float:
     return default
 
 
+# B173: each MPI rank's UCX transport probes for CUDA and, with no GPU visible to the servers,
+# prints "UCX  ERROR cuDeviceGetCount ..." -- ~66 lines in front of SU2's own message on aipexws8.
+_MPI_NOISE_RE = re.compile(r"\bUCX\b.*\b(ERROR|WARN)\b.*\bcu[A-Z]\w*", re.IGNORECASE)
+
+
+def _strip_mpi_noise(log: str) -> tuple[str, int]:
+    """Drop UCX CUDA-probe lines from a solver log; returns (log, lines removed)."""
+    lines = log.splitlines(keepends=True)
+    kept = [ln for ln in lines if not _MPI_NOISE_RE.search(ln)]
+    return "".join(kept), len(lines) - len(kept)
+
+
 def run_su2_solver(
     session_id: str,
     solver: str = "SU2_CFD",
@@ -145,6 +159,12 @@ def run_su2_solver(
 
         runner = SU2Runner(record.workdir)
         result = runner.run(solver, config_path, max_runtime_seconds, capture_log_lines)
+        if isinstance(result, dict) and isinstance(result.get("log_tail"), str):
+            result["log_tail"], noise = _strip_mpi_noise(result["log_tail"])
+            if noise:
+                result["log_noise_removed"] = (
+                    f"{noise} lines of MPI transport (UCX) CUDA-probe messages removed; they are "
+                    "harmless (the servers run with no GPU) and are not SU2 errors.")
         if "error" not in result:
             metadata = build_last_run_metadata(result)
             SESSION_MANAGER.record_run(session_id, metadata)
@@ -174,6 +194,11 @@ def run_su2_solver(
             cfg_errors = parse_config_errors(str(result.get("log_tail", "")))
             if cfg_errors:
                 result["config_errors"] = cfg_errors
+                # B173: remember invalid names so configure_from_cpacs removes them.
+                if isinstance(getattr(record, "invalid_options", None), set):
+                    record.invalid_options.update(
+                        str(e.get("option")).upper() for e in cfg_errors
+                        if "invalid option name" in str(e.get("problem", "")) and e.get("option"))
                 # Two hint paths exist and BOTH must give the same advice. This
                 # one is the branch an unconfigured session actually reaches
                 # (verified live: a fresh create_su2_session + run_su2_solver
@@ -199,11 +224,15 @@ def run_su2_solver(
                 else:
                     result["hint"] = (
                         "SU2 rejected the configuration and did NOT solve, so there is "
-                        "no history and no CL/CD. Fix the options listed in "
-                        "config_errors (use the did_you_mean spellings) via "
-                        "update_config_entries, then re-run. If most of the config is "
-                        "absent rather than misspelt, configure_from_cpacs rebuilds it "
-                        "correctly in one call."
+                        "no history and no CL/CD. An 'invalid option name' in config_errors is "
+                        "not an SU2 option: REMOVE it -- update_config_entries(session_id, "
+                        "updates={'<NAME>': null}) deletes it, and configure_from_cpacs now removes "
+                        "every name SU2 rejected in this session. Do not replace it with a "
+                        "did_you_mean spelling unless you meant that SU2 option: SU2 suggests by "
+                        "spelling and can name an unrelated option. Flight state, aspect ratio and "
+                        "target CL are arguments of configure_from_cpacs / create_su2_session "
+                        "(cruise_mach, cruise_altitude_ft, aspect_ratio, target_cl), not SU2 options. "
+                        "For an 'invalid option value', set a valid value with update_config_entries."
                     )
             elif not result.get("success"):
                 # Any OTHER fatal exit. SU2 words these well but prints them

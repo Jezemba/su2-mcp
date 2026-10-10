@@ -93,6 +93,11 @@ def create_su2_session(
                 result["references"] = configured.get("references")
                 result["flight_state"] = configured.get("flight_state")
                 result["drag_floor"] = configured.get("drag_floor")
+                # B173: say when this tool's arguments arrived inside `overrides`.
+                for key in ("arguments_taken_from_overrides", "arguments_note", "removed_invalid_options",
+                            "rejected_foreign_params", "dropped_invalid"):
+                    if key in configured:
+                        result[key] = configured[key]
         else:
             if aspect_ratio is not None:
                 record.aspect_ratio = float(aspect_ratio)

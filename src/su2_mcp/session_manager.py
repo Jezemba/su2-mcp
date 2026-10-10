@@ -74,6 +74,8 @@ class SessionRecord:
     # For the induced-drag floor on the reported CD (drag_model.assess_drag, Avion B138).
     aspect_ratio: float | None = None
     oswald_efficiency: float | None = None
+    # Option names SU2 rejected as invalid in this session (B173); configure_from_cpacs removes them.
+    invalid_options: set = field(default_factory=set)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
