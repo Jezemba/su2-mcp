@@ -52,6 +52,22 @@ _BAD_VALUE_RE = re.compile(r"(\S+?):\s*invalid option value\s*(\S*)", re.I)
 _FATAL_HEAD_RE = re.compile(r'Error in\s+"([^"]*)"\s*:?\s*$', re.I)
 _FATAL_END_RE = re.compile(r"^\s*-{5,}.*Error Exit.*-{5,}\s*$", re.I)
 
+# B267: SU2 echoes the config into its log, so one huge option value (a 155 MB MESH_FILENAME, l2c 2026-11-10)
+# becomes one huge log line. The lazy (\S+?) patterns below are quadratic in a line's length (8 s at 40k
+# characters, years at 155M) and ran on the server's only thread. SU2's own messages are short lines, so
+# longer lines are not parsed, and no line is sent back longer than this either.
+_MAX_LOG_LINE = 2000
+
+
+def _short_lines(text: str) -> list[str]:
+    return [ln for ln in str(text).replace("\\n", "\n").splitlines() if len(ln) <= _MAX_LOG_LINE]
+
+
+def clip_log_lines(text: str) -> str:
+    """*text* with every line longer than _MAX_LOG_LINE cut, saying how much was cut."""
+    return "\n".join(ln if len(ln) <= _MAX_LOG_LINE else f"{ln[:200]}... [{len(ln) - 200:,} characters cut]"
+                     for ln in str(text).splitlines())
+
 
 def parse_fatal_error(log_text: str) -> dict[str, str] | None:
     """Lift SU2's own fatal-error message out of the log banner.
@@ -61,7 +77,7 @@ def parse_fatal_error(log_text: str) -> dict[str, str] | None:
     richer structured treatment in :func:`parse_config_errors`; this is the
     catch-all so that no fatal error is left unsurfaced.
     """
-    lines = str(log_text).replace("\\n", "\n").splitlines()
+    lines = _short_lines(log_text)
     for idx, line in enumerate(lines):
         head = _FATAL_HEAD_RE.search(line)
         if not head:
@@ -104,8 +120,7 @@ def parse_config_errors(log_text: str) -> list[dict[str, object]]:
         return []
     # SU2 writes these as literal "\n" inside the JSON string as well as real
     # newlines depending on how the log was captured; normalise both.
-    text = log_text.replace("\\n", "\n")
-    lines = [ln.strip() for ln in text.splitlines()]
+    lines = [ln.strip() for ln in _short_lines(log_text)]
 
     errors: list[dict[str, object]] = []
     for i, line in enumerate(lines):
@@ -234,7 +249,7 @@ class SU2Runner:
                 output_text = ""
             process.returncode = process.returncode if process.returncode is not None else -1
             runtime = time.time() - start
-            tail_lines = "\n".join(output_text.splitlines()[-capture_log_lines:])
+            tail_lines = clip_log_lines("\n".join(output_text.splitlines()[-capture_log_lines:]))
             residual_history = self._parse_history_files()
             return {
                 "launch_mode": launch["mode"],

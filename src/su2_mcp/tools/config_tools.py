@@ -66,6 +66,12 @@ def configure_from_cpacs(
     Returns the resulting entries plus which references came from CPACS, so the
     caller can verify the geometry actually reached the solver.
     """
+    from su2_mcp.session_manager import check_mesh_file_name
+
+    try:
+        mesh_file_name = check_mesh_file_name(mesh_file_name)      # B267
+    except ValueError as exc:
+        return _error(str(exc), error_type="invalid_argument")
     try:
         record = SESSION_MANAGER.require(session_id)
 

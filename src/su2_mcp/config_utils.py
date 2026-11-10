@@ -270,6 +270,9 @@ def _format_value(value: object) -> str:
     return str(value)
 
 
+MAX_OPTION_CHARS = 4096
+
+
 def update_config_entries(
     config_path: Path,
     updates: MutableMapping[str, object],
@@ -282,6 +285,20 @@ def update_config_entries(
     name written once made every later solve fail). ``remove`` names options to delete as well;
     both match case-insensitively.
     """
+    # B267: no SU2 option value is kilobytes long; a payload written into the config is echoed into SU2's log
+    # and froze the server's log parser. Refuse before the file is touched; never echo the value.
+    for key, value in updates.items():
+        if value is None:
+            continue
+        if str(key).upper() == "MESH_FILENAME":
+            from su2_mcp.session_manager import check_mesh_file_name
+
+            check_mesh_file_name(value)
+        text = _format_value(value)
+        if len(text) > MAX_OPTION_CHARS:
+            raise ValueError(f"{key}: a {len(text):,}-character value is not an SU2 option value "
+                             f"(limit {MAX_OPTION_CHARS}); nothing was written. Pass data such as the mesh "
+                             "through its own argument, not through the config.")
     entries = parse_config_file(config_path)
     updated_keys: list[str] = []
 

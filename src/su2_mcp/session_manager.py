@@ -11,6 +11,36 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+_MESH_NAME_MAX = 255
+_MESH_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+
+
+def check_mesh_file_name(mesh_file_name: object) -> str:
+    """The mesh file name, or ValueError if it is not a plain file name (Avion B267).
+
+    2026-11-10, l2c seq_graph: a caller passed the 155,514,712-character mesh itself as mesh_file_name.
+    It was written into the session config as MESH_FILENAME, SU2 echoed it into its log, and the log
+    parser spun on that one line with the server's only thread -- the server answered nothing for hours.
+    A mesh file name is a short name in the session's workdir; anything else is refused before it is
+    written anywhere, and the refusal never echoes the value back.
+    """
+    name = str(mesh_file_name if mesh_file_name is not None else "")
+    if not name or len(name) > _MESH_NAME_MAX or not set(name) <= _MESH_NAME_CHARS or name in (".", ".."):
+        shown = name if len(name) <= 60 else f"{name[:40]}... ({len(name):,} characters)"
+        raise ValueError(
+            f"mesh_file_name must be a plain file name such as 'mesh.su2' (letters, digits, '.', '_', '-'; "
+            f"at most {_MESH_NAME_MAX} characters, no path); got {shown!r}. The mesh CONTENTS go in "
+            "initial_mesh / mesh_base64, never in mesh_file_name. Nothing was written."
+        )
+    return name
+
+
+def clip_text(text: object, limit: int = 2000) -> str:
+    """At most *limit* characters of *text*, saying how much was cut (B267: no 155 MB error replies)."""
+    text = str(text)
+    return text if len(text) <= limit else f"{text[:limit]}... [{len(text) - limit:,} more characters cut]"
+
+
 def decode_mesh(mesh_base64: str, mesh_file_name: str) -> bytes:
     """Decode a base64 mesh payload, refusing content that is not a mesh.
 
@@ -95,6 +125,7 @@ class SessionManager:
         mesh_file_name: str = "mesh.su2",
     ) -> SessionRecord:
         """Create a new SU2 session with optional seed files."""
+        mesh_file_name = check_mesh_file_name(mesh_file_name)   # B267: before anything is written
         session_id = str(uuid.uuid4())
         prefix = f"su2_{base_name}_" if base_name else "su2_session_"
         workdir = Path(tempfile.mkdtemp(prefix=prefix))
@@ -128,6 +159,7 @@ class SessionManager:
         self, config_path: Path, mesh_file_name: str
     ) -> None:
         """Ensure the configuration declares the mesh filename."""
+        mesh_file_name = check_mesh_file_name(mesh_file_name)
         existing = config_path.read_text().splitlines()
         updated = []
         mesh_key_written = False
@@ -170,6 +202,7 @@ class SessionManager:
         mesh_file_name: str = "mesh.su2",
     ) -> Path:
         """Persist a mesh to the session directory and update bookkeeping."""
+        mesh_file_name = check_mesh_file_name(mesh_file_name)
         record = self.require(session_id)
         mesh_bytes = decode_mesh(mesh_base64, mesh_file_name)
         mesh_path = record.workdir / mesh_file_name

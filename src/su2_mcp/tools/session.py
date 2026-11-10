@@ -10,8 +10,12 @@ SESSION_MANAGER = SessionManager()
 def _error(
     message: str, error_type: str = "runtime_error", details: object | None = None
 ) -> dict[str, object]:
-    """Standardized error response payload."""
-    return {"error": {"type": error_type, "message": message, "details": details}}
+    """Standardized error response payload. Details are clipped (B267: a reply once echoed a 155 MB argument)."""
+    from su2_mcp.session_manager import clip_text
+
+    if isinstance(details, str):
+        details = clip_text(details)
+    return {"error": {"type": error_type, "message": clip_text(message), "details": details}}
 
 
 def create_su2_session(
@@ -47,6 +51,12 @@ def create_su2_session(
     follow-up call is needed. ``configure_from_cpacs`` remains available for
     reconfiguring an existing session.
     """
+    from su2_mcp.session_manager import check_mesh_file_name
+
+    try:
+        mesh_file_name = check_mesh_file_name(mesh_file_name)      # B267: refused before any session or file
+    except ValueError as exc:
+        return _error(str(exc), error_type="invalid_argument")
     try:
         record = SESSION_MANAGER.create_session(
             base_name=base_name,
