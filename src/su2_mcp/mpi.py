@@ -118,7 +118,11 @@ def _extra_launcher_args(launcher: str) -> list[str]:
         raw = os.environ["SU2_MPIRUN_ARGS"].strip()
         return raw.split() if raw else []
     if _launcher_flavour(launcher) == "openmpi":
-        return ["--mca", "osc", "^ucx"]
+        # Avion B269 (2026-11-11): Open MPI 5 binds rank i to core i by default, so every concurrent solve on
+        # a machine ran on cores 0..N-1. Three overlapping 16-rank solves on the 72-core ws8 shared 16 cores and
+        # ran 3-8x slower (an hour reached ~216 of ~250 iterations) while 56 cores idled. Unbound, the kernel
+        # spreads them. tigl-mcp's SU2_DEF launch already passes --bind-to none.
+        return ["--mca", "osc", "^ucx", "--bind-to", "none"]
     return []
 
 

@@ -131,7 +131,7 @@ def test_openmpi_gets_the_ucx_osc_workaround_by_default(monkeypatch):
     monkeypatch.delenv("SU2_MPIRUN_ARGS", raising=False)
     monkeypatch.setenv("SU2_MPI_RANKS", "1")
     d = mpi.parallel_decision("SU2_CFD")
-    assert d["command"] == ["/bin/mpirun", "--mca", "osc", "^ucx", "-np", "1", "/bin/m"]
+    assert d["command"] == ["/bin/mpirun", "--mca", "osc", "^ucx", "--bind-to", "none", "-np", "1", "/bin/m"]
 
 
 def test_empty_env_disables_the_default(monkeypatch):
