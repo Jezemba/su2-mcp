@@ -91,6 +91,14 @@ def _withhold_owned(updates: dict[str, Any], owned: dict[str, dict[str, object]]
     return kept, refused
 
 
+def _stale_tool_argument(key: object) -> bool:
+    """A tool-argument name written into a config by an earlier call (B173), but not TARGET_CL: that one is
+    also a real SU2 option, written by the trim block. Removing it on a reconfigure without target_cl left
+    FIXED_CL_MODE= YES with no TARGET_CL, so SU2 trimmed to its own default target, silently (Avion M11)."""
+    name = str(key).strip()
+    return name.lower() in config_utils.TOOL_ARGUMENT_NAMES and name != "TARGET_CL"
+
+
 def _trim_report(target_cl: float | None, config_path: Path) -> dict[str, object]:
     """The lift trim the session's config now holds, in words (Avion M11: a reconfigure without target_cl
     keeps an earlier FIXED_CL_MODE / TARGET_CL, and the reply used to say the solve stays at a fixed AOA)."""
@@ -191,10 +199,10 @@ def configure_from_cpacs(
                 elif given.get(name) is not None:
                     # F10/B275: say it plainly, e.g. TARGET_CL in overrides while the framework passes target_cl.
                     moved_arguments[name] = (
-                        f"not used: overrides asked {value!r}, but the {name} argument ({given[name]}) was given "
+                        f"ignored: overrides asked {value!r}, but the {name} argument ({given[name]}) was given "
                         f"and is the one applied")
                 else:
-                    moved_arguments[name] = f"not used: {value!r} is not a number"
+                    moved_arguments[name] = f"ignored: {value!r} is not a number"
             cruise_mach, cruise_altitude_ft = given["cruise_mach"], given["cruise_altitude_ft"]
             aspect_ratio, target_cl = given["aspect_ratio"], given["target_cl"]
             oswald_efficiency = given["oswald_efficiency"]
@@ -370,7 +378,7 @@ def configure_from_cpacs(
         rejected_here = {str(n).upper() for n in (getattr(record, "invalid_options", None) or ())}
         stale = sorted(k for k in existing
                        if str(k).upper() in rejected_here
-                       or str(k).strip().lower() in config_utils.TOOL_ARGUMENT_NAMES)
+                       or _stale_tool_argument(k))
         config_utils.update_config_entries(
             record.config_path, entries, create_if_missing=True, remove=stale
         )

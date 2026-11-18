@@ -176,7 +176,7 @@ def test_target_cl_in_overrides_is_handled_explicitly(cpacs):
                                            overrides={"TARGET_CL": 0.56})
     assert _entries(out["config_path"])["TARGET_CL"] == pytest.approx(0.6)
     note = out["arguments_taken_from_overrides"]["target_cl"]
-    assert "not used" in note and "0.56" in note and "0.6" in note
+    assert note.startswith("ignored") and "0.56" in note and "0.6" in note
     # alone, it is taken as the argument (B173) and the trim is built from it
     out = session_tools.create_su2_session(cpacs_file_path=cpacs, overrides={"TARGET_CL": 0.56})
     assert _entries(out["config_path"])["FIXED_CL_MODE"] == "YES"
@@ -219,7 +219,8 @@ def test_reconfigure_with_new_arguments_changes_owned_values(cpacs):
 def test_reconfigure_without_target_reports_the_kept_trim(cpacs):
     out = session_tools.create_su2_session(cpacs_file_path=cpacs, target_cl=0.56)
     again = config_tools.configure_from_cpacs(out["session_id"], cpacs)
-    assert _entries(again["config_path"])["FIXED_CL_MODE"] == "YES"
+    cfg = _entries(again["config_path"])
+    assert cfg["FIXED_CL_MODE"] == "YES" and cfg["TARGET_CL"] == pytest.approx(0.56)  # was deleted (M11)
     assert again["trim"]["target_cl"] == pytest.approx(0.56)
     assert "earlier call" in again["trim"]["note"]
 
