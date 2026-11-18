@@ -141,11 +141,33 @@ def read_history_csv(
                 "group names (e.g. LIFT, DRAG, AERO_COEFF). Omit `columns` to get "
                 "every column."
             )
+        if full_path.name.lower().startswith("history"):
+            response["convergence"] = _history_convergence(record, full_path)
+            response["convergence_note"] = (
+                "Whether the solve that wrote this file converged and reached its lift target (from the "
+                "last run_su2_solver of this session when there is one, else from this file and the session "
+                "config). A last row of an unconverged or untrimmed solve is not a result.")
         return response
     except KeyError as exc:
         return _error(str(exc), error_type="not_found")
     except Exception as exc:  # pragma: no cover
         return _error("Failed to parse history CSV", details=str(exc))
+
+
+def _history_convergence(record: object, path: object) -> dict[str, object]:
+    """Convergence of the solve behind a history file (Avion M10)."""
+    last = getattr(record, "last_convergence", None)
+    if isinstance(last, dict):
+        return last
+    from su2_mcp.config_utils import parse_config_file
+    from su2_mcp.convergence import assess, read_history_rows
+
+    cfg_path = getattr(record, "config_path", None)
+    try:
+        config = parse_config_file(cfg_path) if cfg_path is not None and cfg_path.exists() else {}
+    except Exception:  # noqa: BLE001
+        config = {}
+    return assess(config, read_history_rows(path), None)
 
 
 def _canon_header(name: str) -> str:

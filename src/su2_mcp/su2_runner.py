@@ -251,6 +251,8 @@ class SU2Runner:
             runtime = time.time() - start
             tail_lines = clip_log_lines("\n".join(output_text.splitlines()[-capture_log_lines:]))
             residual_history = self._parse_history_files()
+            from su2_mcp.convergence import solver_exit_message
+
             return {
                 "launch_mode": launch["mode"],
                 "mpi_ranks": launch["ranks"],
@@ -262,6 +264,8 @@ class SU2Runner:
                 "runtime_seconds": runtime,
                 "log_tail": tail_lines,
                 "residual_history": residual_history,
+                # M10: SU2's own convergence verdict, read from the WHOLE log (log_tail may not reach it).
+                "solver_exit_message": solver_exit_message(output_text),
             }
         except subprocess.TimeoutExpired as exc:
             runtime = time.time() - start

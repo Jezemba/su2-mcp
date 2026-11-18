@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import binascii
+import math
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,99 @@ from su2_mcp.tools.session import SESSION_MANAGER, _error
 # iterations (70 min) outlived MAS-Aviary's 3600 s watchdog twice in the 2026-10-08 sandbox, and the
 # stage got no result at all. 360 is ~50 min; a trimmed solve converges in ~250-300 (Avion B152).
 _TRIM_MIN_ITER = 360
+
+# Avion F10 (l20_final O_GR 17: overrides FREESTREAM 24,800 Pa / 223.15 K; N_GR 1: ASPECT_RATIO /
+# OSWALD_EFFICIENCY keys). The settings configure_from_cpacs derives from its own arguments belong to those
+# arguments; `overrides` and update_config_entries may not change them. The trim keys are the ones the
+# target_cl block writes; ITER is held only at or above the trim's minimum.
+_TRIM_KEYS = ("FIXED_CL_MODE", "TARGET_CL", "DCL_DALPHA", "UPDATE_AOA_ITER_LIMIT", "CONV_CAUCHY_EPS",
+              "ITER_DCL_DALPHA")
+
+
+def _same_value(a: object, b: object) -> bool:
+    try:
+        return math.isclose(float(a), float(b), rel_tol=1e-9, abs_tol=1e-12)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(a).strip().upper() == str(b).strip().upper()
+
+
+def _owned_settings(entries: dict[str, Any], trim: dict[str, Any], ref_area: float | None,
+                    ref_length: float | None, cruise_mach: float | None,
+                    cruise_altitude_ft: float | None) -> dict[str, dict[str, object]]:
+    """{KEY: {"value", "set_by"}} for the settings this call's arguments determine."""
+    owned: dict[str, dict[str, object]] = {}
+    if ref_area is not None:
+        owned["REF_AREA"] = {"value": entries["REF_AREA"], "set_by": "ref_area (the measured wing area)"}
+    if ref_length is not None:
+        owned["REF_LENGTH"] = {"value": entries["REF_LENGTH"], "set_by": "ref_length (the measured MAC)"}
+    if cruise_mach is not None:
+        owned["MACH_NUMBER"] = {"value": float(cruise_mach), "set_by": "cruise_mach"}
+    if cruise_altitude_ft is not None:
+        from su2_mcp.drag_model import isa
+
+        p, t = isa(cruise_altitude_ft)
+        owned["FREESTREAM_PRESSURE"] = {"value": round(p, 1),
+                                        "set_by": f"cruise_altitude_ft ({cruise_altitude_ft:g} ft, ISA)"}
+        owned["FREESTREAM_TEMPERATURE"] = {"value": round(t, 2),
+                                           "set_by": f"cruise_altitude_ft ({cruise_altitude_ft:g} ft, ISA)"}
+    for key in _TRIM_KEYS:
+        if key in trim:
+            owned[key] = {"value": trim[key], "set_by": "target_cl (the lift trim)"}
+    return owned
+
+
+def _withhold_owned(updates: dict[str, Any], owned: dict[str, dict[str, object]], trimmed: bool
+                    ) -> tuple[dict[str, Any], list[dict[str, object]]]:
+    """Split ``updates`` into (applied, not applied). A setting owned by an argument keeps its value; so does
+    the trim's iteration room (ITER below the trim minimum) and FIXED_CL_MODE, which only target_cl sets."""
+    kept: dict[str, Any] = {}
+    refused: list[dict[str, object]] = []
+    for key, value in updates.items():
+        name = str(key).strip().upper()
+        if name in owned:
+            used = owned[name]["value"]
+            if value is not None and _same_value(value, used):
+                kept[key] = value
+                continue
+            refused.append({"key": str(key), "asked": value, "used": used,
+                            "reason": f"set by the {owned[name]['set_by']} argument"})
+        elif name == "FIXED_CL_MODE":
+            refused.append({"key": str(key), "asked": value, "used": None,
+                            "reason": "the lift trim is set by the target_cl argument, never by FIXED_CL_MODE alone"})
+        elif name == "ITER" and trimmed and value is not None:
+            try:
+                too_few = int(float(value)) < _TRIM_MIN_ITER
+            except (TypeError, ValueError):
+                too_few = True
+            if too_few:
+                refused.append({"key": str(key), "asked": value, "used": f">= {_TRIM_MIN_ITER}",
+                                "reason": (f"a trimmed (target_cl) solve needs at least {_TRIM_MIN_ITER} iterations "
+                                           "for the angle updates")})
+            else:
+                kept[key] = value
+        else:
+            kept[key] = value
+    return kept, refused
+
+
+def _trim_report(target_cl: float | None, config_path: Path) -> dict[str, object]:
+    """The lift trim the session's config now holds, in words (Avion M11: a reconfigure without target_cl
+    keeps an earlier FIXED_CL_MODE / TARGET_CL, and the reply used to say the solve stays at a fixed AOA)."""
+    if target_cl is not None:
+        return {"target_cl": float(target_cl), "note": "AOA is solved for, not fixed: CD is the drag at this lift."}
+    try:
+        current = config_utils.parse_config_file(config_path) if config_path.exists() else {}
+    except Exception:  # noqa: BLE001
+        current = {}
+    if str(current.get("FIXED_CL_MODE", "")).strip().upper() == "YES":
+        kept = current.get("TARGET_CL")
+        return {"target_cl": float(kept) if isinstance(kept, (int, float)) else kept,
+                "note": ("No target_cl in this call: the lift trim set by an earlier call stays in this session's "
+                         f"config (TARGET_CL= {kept}). Pass target_cl to change it.")}
+    return {"target_cl": None, "note":
+            "No target CL given, so the solve stays at the configured AOA and its CL "
+            "is whatever that angle produces -- which is not necessarily a cruise "
+            "condition. Pass target_cl = W / (q * S) for the drag at cruise lift."}
 
 
 def configure_from_cpacs(
@@ -57,7 +151,10 @@ def configure_from_cpacs(
 
     ``overrides`` carries the caller's pinned flight state and numerics (e.g.
     cruise freestream and solver settings from an experiment's canonical
-    baseline) and is applied LAST, so it wins. The split is deliberate:
+    baseline) and is applied over the built-in base, except where this call's own arguments set the
+    value (Avion F10): REF_AREA / REF_LENGTH from ref_area / ref_length, MACH_NUMBER from cruise_mach,
+    FREESTREAM_PRESSURE / TEMPERATURE from cruise_altitude_ft and the trim keys from target_cl. Those
+    overrides are not applied and the reply lists them under overrides_not_applied. The split is deliberate:
       * CPACS owns the geometry references -- they must track the morphed design.
       * The caller owns flight state and numerics -- the adapter's built-in
         defaults are SEA-LEVEL (101325 Pa / 288.15 K), which is wrong for a
@@ -91,8 +188,13 @@ def configure_from_cpacs(
                 if given.get(name) is None and number is not None:
                     given[name] = number
                     moved_arguments[name] = number
+                elif given.get(name) is not None:
+                    # F10/B275: say it plainly, e.g. TARGET_CL in overrides while the framework passes target_cl.
+                    moved_arguments[name] = (
+                        f"not used: overrides asked {value!r}, but the {name} argument ({given[name]}) was given "
+                        f"and is the one applied")
                 else:
-                    moved_arguments[name] = "ignored (argument already given, or not a number)"
+                    moved_arguments[name] = f"not used: {value!r} is not a number"
             cruise_mach, cruise_altitude_ft = given["cruise_mach"], given["cruise_altitude_ft"]
             aspect_ratio, target_cl = given["aspect_ratio"], given["target_cl"]
             oswald_efficiency = given["oswald_efficiency"]
@@ -208,7 +310,15 @@ def configure_from_cpacs(
                 trim["ITER"] = _TRIM_MIN_ITER
             entries.update(trim)
 
-        # Caller's pinned flight state / numerics win.
+        # F10: the settings this call derives from its own arguments. `overrides` may not change them (it
+        # used to: overrides were applied after the trim block, so FIXED_CL_MODE / DCL_DALPHA / ITER there
+        # undid the trim, and REF_AREA there replaced the measured wing). An earlier call's ownership stays
+        # unless this call rewrites the key from its base config (REF_*, MACH_NUMBER, AOA always are).
+        owned = {k: v for k, v in (getattr(record, "owned_settings", None) or {}).items() if k not in entries}
+        owned.update(_owned_settings(entries, trim, ref_area, ref_length, cruise_mach, cruise_altitude_ft))
+        not_applied: list[dict[str, object]] = []
+
+        # Caller's pinned flight state / numerics win, except the settings above.
         dropped: list[str] = []
         foreign: list[dict[str, str]] = []
         meaning_rejected: list[dict[str, str]] = []
@@ -226,9 +336,12 @@ def configure_from_cpacs(
             # even when every pinned value is right (observed: TURB_MODEL, four
             # times in one run).
             corrected, dropped = config_utils.drop_known_invalid(corrected)
+            corrected, not_applied = _withhold_owned(corrected, owned, trimmed=target_cl is not None or "TARGET_CL" in owned)
             entries.update(corrected)
+            applied_keys = sorted(str(k) for k in corrected)
         else:
             remapped = []
+            applied_keys = []
 
         # The mission's flight state wins over the pinned numerics (B132).
         flight_state: dict[str, Any] = {}
@@ -263,6 +376,8 @@ def configure_from_cpacs(
         )
         if isinstance(getattr(record, "invalid_options", None), set):
             record.invalid_options.clear()
+        record.owned_settings = owned
+        trim_report = _trim_report(target_cl, record.config_path)
 
         result: dict[str, object] = {
             "config_path": str(record.config_path),
@@ -281,15 +396,16 @@ def configure_from_cpacs(
                 "ref_length_source": ref_source_length,
             },
             "keys_written": sorted(entries),
-            "trim": ({"target_cl": float(target_cl), "note":
-                      "AOA is solved for, not fixed: CD is the drag at this lift."}
-                     if target_cl is not None else
-                     {"target_cl": None, "note":
-                      "No target CL given, so the solve stays at the configured AOA and its CL "
-                      "is whatever that angle produces -- which is not necessarily a cruise "
-                      "condition. Pass target_cl = W / (q * S) for the drag at cruise lift."}),
-            "overrides_applied": sorted(overrides) if overrides else [],
+            "trim": trim_report,
+            "overrides_applied": applied_keys,
         }
+        if not_applied:
+            result["overrides_not_applied"] = not_applied
+            result["overrides_note"] = (
+                "These settings are set by this tool's arguments (flight state from cruise_mach / "
+                "cruise_altitude_ft, references from ref_area / ref_length, the lift trim from target_cl), so an "
+                "override cannot change them; the value in `used` is the one in the config. Change the argument "
+                "instead.")
         if ref_notes:
             result["reference_warnings"] = ref_notes
         if foreign:
@@ -360,10 +476,20 @@ def update_config_entries(
         corrected, meaning_rejected = config_utils.reject_meaning_changes(corrected)
         corrected, warnings = config_utils.remap_deprecated_keys(corrected)
         corrected, dropped_invalid = config_utils.drop_known_invalid(corrected)
+        # F10: the settings configure_from_cpacs derived from its arguments are not changed here either.
+        owned = getattr(record, "owned_settings", None) or {}
+        corrected, refused = _withhold_owned(corrected, owned, trimmed="TARGET_CL" in owned)
         updated = config_utils.update_config_entries(
             record.config_path, corrected, create_if_missing=create_if_missing
         )
         result: dict[str, object] = {"updated_keys": updated}
+        if refused:
+            result["refused_keys"] = refused
+            result["refused_note"] = (
+                "Not written: these settings are set by configure_from_cpacs / create_su2_session arguments "
+                "(flight state from cruise_mach / cruise_altitude_ft, references from ref_area / ref_length, the "
+                "lift trim from target_cl). The config keeps the value in `used`; change the argument there "
+                "instead.")
         removed = sorted(str(k) for k, v in corrected.items() if v is None)
         if removed:
             result["removed_keys"] = removed

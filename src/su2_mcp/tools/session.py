@@ -105,7 +105,8 @@ def create_su2_session(
                 result["drag_floor"] = configured.get("drag_floor")
                 # B173: say when this tool's arguments arrived inside `overrides`.
                 for key in ("arguments_taken_from_overrides", "arguments_note", "removed_invalid_options",
-                            "rejected_foreign_params", "dropped_invalid"):
+                            "rejected_foreign_params", "dropped_invalid", "overrides_not_applied",
+                            "overrides_note", "overrides_applied", "trim"):
                     if key in configured:
                         result[key] = configured[key]
         else:

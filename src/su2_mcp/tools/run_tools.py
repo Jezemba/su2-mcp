@@ -129,6 +129,41 @@ def _strip_mpi_noise(log: str) -> tuple[str, int]:
     return "".join(kept), len(lines) - len(kept)
 
 
+def _report_convergence(result: dict[str, object], record: object, config_path: object) -> None:
+    """Say whether a solve that exited cleanly converged and reached its lift target (Avion M10).
+
+    SU2 exits 0 at the iteration limit too, so exit code 0 is not a result. A solve that did not converge,
+    or a fixed-CL solve whose CL is off its TARGET_CL, is reported with ``success: false`` and the reason
+    in plain words; its last-iteration CL/CD go out as ``last_iteration_coefficients``, never as
+    ``final_coefficients``, so nothing downstream can take them for a converged result. A solve whose
+    convergence cannot be checked keeps ``success: true`` with ``converged: null`` and the reason.
+    """
+    from su2_mcp.convergence import assess_solve
+
+    # The runner read SU2's own verdict from the whole log (log_tail may not reach it).
+    exit_message = result.get("solver_exit_message")
+    conv = assess_solve(config_path, record.workdir,  # type: ignore[attr-defined, arg-type]
+                        exit_message if isinstance(exit_message, str) else None)
+    result["convergence"] = conv
+    result["converged"] = conv["converged"]
+    result["trimmed"] = conv["trimmed"]
+    try:
+        record.last_convergence = conv  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
+    if conv["converged"] is False or conv["trimmed"] is False:
+        result["success"] = False
+        result["solver_exit_ok"] = True
+        result["not_a_result"] = conv["summary"]
+        coeffs = final_coefficients(record.workdir)  # type: ignore[attr-defined]
+        if coeffs:
+            result["last_iteration_coefficients"] = coeffs
+        result["hint"] = (
+            "SU2 ran to the end without error, but this is not a usable aerodynamic result: "
+            + conv["summary"]
+            + " last_iteration_coefficients are the values at the last iteration, reported for diagnosis only.")
+
+
 def run_su2_solver(
     session_id: str,
     solver: str = "SU2_CFD",
@@ -157,6 +192,7 @@ def run_su2_solver(
         except Exception as exc:  # never block a solve on the guard itself
             force_output = {"error": f"force-output check failed: {exc}"}
 
+        record.last_convergence = None   # M10: a verdict belongs to one solve; this one replaces it
         runner = SU2Runner(record.workdir)
         result = runner.run(solver, config_path, max_runtime_seconds, capture_log_lines)
         if isinstance(result, dict) and isinstance(result.get("log_tail"), str):
@@ -170,6 +206,8 @@ def run_su2_solver(
             SESSION_MANAGER.record_run(session_id, metadata)
         if isinstance(result, dict):
             result["force_output"] = force_output
+            if result.get("success") and str(solver).upper().startswith("SU2_CFD"):
+                _report_convergence(result, record, config_path)
             if result.get("success"):
                 coeffs = final_coefficients(record.workdir)
                 if coeffs:

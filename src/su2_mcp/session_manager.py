@@ -106,6 +106,12 @@ class SessionRecord:
     oswald_efficiency: float | None = None
     # Option names SU2 rejected as invalid in this session (B173); configure_from_cpacs removes them.
     invalid_options: set = field(default_factory=set)
+    # Settings configure_from_cpacs derived from its own arguments (flight state, references, lift trim):
+    # {KEY: {"value": v, "set_by": "<argument>"}}. An override or update_config_entries may not change
+    # them (Avion F10); the argument is changed instead.
+    owned_settings: dict = field(default_factory=dict)
+    # Convergence and trim of the last solve (convergence.assess; Avion M10).
+    last_convergence: dict | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -230,6 +236,7 @@ class SessionManager:
                     "log_tail": record.last_run_metadata.log_tail,
                 }
             ),
+            "last_convergence": record.last_convergence,
         }
 
     def record_run(self, session_id: str, metadata: LastRunMetadata) -> None:
