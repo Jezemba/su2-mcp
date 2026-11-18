@@ -24,9 +24,13 @@ import re
 from pathlib import Path
 from typing import Any
 
-# |CL / TARGET_CL - 1| above this is "not trimmed". SU2's own fixed-CL test is |CL - TARGET_CL| <
-# CONV_CAUCHY_EPS / 2 = 0.005 with configure_from_cpacs' setting, i.e. ~1% of a cruise CL near 0.55.
+# |CL / TARGET_CL - 1| above this is "not trimmed" (relative; MAS-Aviary aero_guard uses the same constant).
+# SU2 8.3 stops a fixed-CL solve when |CL - TARGET_CL| < CONV_CAUCHY_EPS / 2 (absolute;
+# CEulerSolver::FixedCL_Convergence). configure_from_cpacs sets CONV_CAUCHY_EPS = 2 x TRIM_STOP_MARGIN x
+# TRIM_TOLERANCE x TARGET_CL (config_tools.trim_stop_cauchy_eps), so SU2 stops within 0.9 % of any target and a
+# solve SU2 reports trimmed is accepted here. A fixed 0.01 (0.005 absolute) was 1.7 % of a 0.3 target.
 TRIM_TOLERANCE = 0.01
+TRIM_STOP_MARGIN = 0.9
 
 # CONV_FIELD names an SU2 screen/history field; these are the residual ones and their history columns.
 _RESIDUAL_COLUMN = {
@@ -155,8 +159,11 @@ def assess(config: dict[str, Any], rows: list[dict[str, str]], log_text: str | N
         if target is not None and achieved is not None:
             rel = (achieved / target - 1.0) if target != 0 else None
             on_target = abs(rel) <= TRIM_TOLERANCE if rel is not None else abs(achieved) <= 0.005
+        eps = _number(cfg.get("CONV_CAUCHY_EPS"))
         trim = {"fixed_cl_mode": True, "target_cl": target, "achieved_cl": achieved,
-                "relative_error": rel, "tolerance": TRIM_TOLERANCE, "on_target": on_target}
+                "relative_error": rel, "tolerance": TRIM_TOLERANCE, "on_target": on_target,
+                # SU2's own stop: |CL - TARGET_CL| < CONV_CAUCHY_EPS / 2, absolute (for diagnosis).
+                "su2_stop_tolerance_abs": eps / 2 if eps is not None else None}
         if on_target is True:
             trim_text = f"Trimmed: CL {_fmt(achieved)} is on the target {_fmt(target)} ({rel:+.2%})." if rel is not None \
                 else f"Trimmed: CL {_fmt(achieved)} is on the target {_fmt(target)}."
@@ -197,5 +204,5 @@ def assess_solve(config_path: Path, workdir: object, log_text: str | None) -> di
     return assess(config, read_history_rows(history_file(workdir)), log_text)
 
 
-__all__ = ["TRIM_TOLERANCE", "assess", "assess_solve", "history_file", "read_history_rows",
+__all__ = ["TRIM_STOP_MARGIN", "TRIM_TOLERANCE", "assess", "assess_solve", "history_file", "read_history_rows",
            "solver_exit_message"]

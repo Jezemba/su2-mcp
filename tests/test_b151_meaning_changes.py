@@ -49,5 +49,7 @@ def test_the_trim_can_converge_and_ends_before_the_watchdog():
     import inspect
 
     src = inspect.getsource(config_tools)
-    assert '"CONV_CAUCHY_EPS": 0.01' in src and '"ITER_DCL_DALPHA": 0,' in src
+    # final re-run review item 8: the stop follows the target (0.0101 at a cruise CL of 0.56)
+    assert '"CONV_CAUCHY_EPS": trim_stop_cauchy_eps(target_cl)' in src and '"ITER_DCL_DALPHA": 0,' in src
+    assert abs(config_tools.trim_stop_cauchy_eps(0.56) - 0.01) < 2e-4
     assert config_tools._TRIM_MIN_ITER * 8.4 < 3600     # worst case at the measured ~8.4 s/iteration

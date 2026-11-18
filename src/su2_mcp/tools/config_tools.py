@@ -21,6 +21,16 @@ _TRIM_MIN_ITER = 360
 # OSWALD_EFFICIENCY keys). The settings configure_from_cpacs derives from its own arguments belong to those
 # arguments; `overrides` and update_config_entries may not change them. The trim keys are the ones the
 # target_cl block writes; ITER is held only at or above the trim's minimum.
+def trim_stop_cauchy_eps(target_cl: float) -> float:
+    """CONV_CAUCHY_EPS for a fixed-CL solve: SU2 8.3 stops the trim when |CL - TARGET_CL| < CONV_CAUCHY_EPS / 2
+    (CEulerSolver::FixedCL_Convergence), so this puts that stop at TRIM_STOP_MARGIN x TRIM_TOLERANCE of the
+    target, relative, inside su2-mcp's own acceptance."""
+    from su2_mcp.convergence import TRIM_STOP_MARGIN, TRIM_TOLERANCE
+
+    # Floor: a target near zero would otherwise ask for an exact CL and never stop.
+    return max(round(2.0 * TRIM_STOP_MARGIN * TRIM_TOLERANCE * abs(float(target_cl)), 8), 1e-3)
+
+
 _TRIM_KEYS = ("FIXED_CL_MODE", "TARGET_CL", "DCL_DALPHA", "UPDATE_AOA_ITER_LIMIT", "CONV_CAUCHY_EPS",
               "ITER_DCL_DALPHA")
 
@@ -302,7 +312,13 @@ def configure_from_cpacs(
                 # updated every UPDATE_AOA_ITER_LIMIT iterations until ITER ran out. 0.01 accepts CL
                 # within +/-0.005 (~1% of a cruise CL). CONV_CAUCHY_EPS is otherwise used only by Cauchy
                 # convergence fields (COutput), and these solves converge on RMS_DENSITY.
-                "CONV_CAUCHY_EPS": 0.01,
+                # Final re-run review item 8: 0.005 is ABSOLUTE, so below CL 0.5 SU2 stopped "trimmed" at
+                # up to 1.7 % off a 0.3 target while convergence.TRIM_TOLERANCE (1 % relative, also used by
+                # MAS-Aviary aero_guard) refused it. The stop now follows the target: SU2 stops within 0.9 %
+                # of it at any CL (0.0101 at 0.56, i.e. as before for a cruise CL), so a solve SU2 calls
+                # trimmed is trimmed for su2-mcp too. (SU2 8.3 adds LIFT as a Cauchy field only when it is
+                # already in CONV_FIELD -- CFlowCompOutput.cpp:89 --, so this changes nothing else here.)
+                "CONV_CAUCHY_EPS": trim_stop_cauchy_eps(target_cl),
                 # After the trim converges SU2 runs ITER_DCL_DALPHA more iterations to finite-difference
                 # dCL/dalpha (500 by default); 0 ends the solve as soon as CL is on target.
                 "ITER_DCL_DALPHA": 0,

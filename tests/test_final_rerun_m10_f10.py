@@ -228,3 +228,33 @@ def test_reconfigure_without_target_reports_the_kept_trim(cpacs):
 def test_untrimmed_session_still_says_fixed_aoa(cpacs):
     out = session_tools.create_su2_session(cpacs_file_path=cpacs)
     assert out["trim"]["target_cl"] is None and "configured AOA" in out["trim"]["note"]
+
+
+# ---------------------------------------------------------------- review item 8: SU2's stop agrees with ours
+
+
+@pytest.mark.parametrize("target", [0.3, 0.45, 0.56, 0.65, 0.8])
+def test_su2_trim_stop_lies_inside_the_acceptance_at_any_target(cpacs, target):
+    """SU2 8.3 stops a fixed-CL solve at |CL - TARGET_CL| < CONV_CAUCHY_EPS / 2 (absolute). That must be inside
+    TRIM_TOLERANCE (1 % relative) at every realistic target; a fixed 0.01 was 1.7 % at 0.3."""
+    from su2_mcp.convergence import TRIM_TOLERANCE
+
+    out = session_tools.create_su2_session(cpacs_file_path=cpacs, target_cl=target)
+    eps = _entries(out["config_path"])["CONV_CAUCHY_EPS"]
+    assert eps / 2 <= 0.9 * TRIM_TOLERANCE * target + 1e-12
+    # a solve SU2 would stop "trimmed" (just inside its own stop) is accepted ...
+    cfg = {"FIXED_CL_MODE": "YES", "TARGET_CL": target, "CONV_CAUCHY_EPS": eps,
+           "CONV_FIELD": "RMS_DENSITY", "CONV_RESIDUAL_MINVAL": -6, "ITER": 500}
+    stopped = assess(cfg, [{"Inner_Iter": "250", "rms[Rho]": "-6.1", "CL": str(target + 0.999 * eps / 2)}],
+                     "All convergence criteria satisfied.")
+    assert stopped["converged"] is True and stopped["trimmed"] is True
+    assert stopped["trim"]["su2_stop_tolerance_abs"] == pytest.approx(eps / 2)
+    # ... and one 1.5 % off is refused
+    off = assess(cfg, [{"Inner_Iter": "499", "rms[Rho]": "-6.1", "CL": str(target * 1.015)}],
+                 "Maximum number of iterations reached (ITER = 500 ).")
+    assert off["trimmed"] is False
+
+
+def test_cruise_target_stop_is_unchanged():
+    assert config_tools.trim_stop_cauchy_eps(0.56) == pytest.approx(0.01008)
+    assert config_tools.trim_stop_cauchy_eps(0.0) == 1e-3          # never an exact-CL stop
